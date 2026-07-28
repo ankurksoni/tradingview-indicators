@@ -40,7 +40,7 @@ float i_bbwThresh = input.float(15.0,"Bollinger Bandwidth Threshold (<)",    min
 string G_VIS = "Visuals"
 bool  i_colorSetup = input.bool(true,         "Highlight setup candles",     group=G_VIS)
 color i_setupColor = input.color(color.black, "Setup candle color",          group=G_VIS)
-color i_divDot     = input.color(color.yellow, "CVD Div dot color",           group=G_VIS)
+color i_divDot     = input.color(color.rgb(red = 173, green = 238, blue = 179, transp = 0),   "CVD Div dot color",           group=G_VIS)
 float i_arrowGap   = input.float(3.0, "Dot gap below candle (%)", minval=0.5, maxval=20.0, step=0.5, group=G_VIS,
      tooltip="How far below the bar low the dot is drawn, as a % of the bar low price.") / 100
 
@@ -92,11 +92,10 @@ float totalUpVol = nz(array.sum(upVolumes))
 float totalDnVol = nz(array.sum(dnVolumes))
 float delta      = totalUpVol + totalDnVol   // positive = net buying, negative = net selling
 
-// ─── Teal candle condition from CVD.pine ──────────────────────
-// divergence = delta direction conflicts with price bar direction
-// teal (bullish) = net buying pressure (delta > 0) on a bearish price candle
-bool cvdDivergence = delta != 0 and math.sign(delta) != math.sign(close - open)
-bool bullishCvdDiv = delta > 0 and cvdDivergence
+// ─── Bullish divergence: green candle but net selling delta ───
+// Price closed up (bulls won the bar) yet delta < 0 (sellers dominated intrabar flow).
+// This means bulls absorbed heavy selling and still pushed price up — a sign of strength.
+bool bullishCvdDiv = close > open and delta < 0
 
 // ═══════════════════════════════════════════════════════════════
 //  EMAs
