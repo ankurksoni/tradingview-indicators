@@ -1,0 +1,424 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0
+// © VCP Detector v6 — Volatility Contraction Pattern with Quality Score
+
+//@version=6
+indicator("VCP Detector", overlay=true, max_boxes_count=50, max_lines_count=100, max_labels_count=100, max_tables_count=2)
+
+// ─────────────────────────────────────────────
+// INPUTS
+// ─────────────────────────────────────────────
+grp_vcp   = "VCP Settings"
+lookback  = input.int(60,   "Lookback Bars",           minval=20, maxval=200, group=grp_vcp)
+minContr  = input.int(3,    "Min Contractions",         minval=2,  maxval=6,   group=grp_vcp)
+pivotBars = input.int(5,    "Pivot Strength (bars)",    minval=2,  maxval=10,  group=grp_vcp)
+
+grp_ema   = "EMA Settings"
+showEMA   = input.bool(true,  "Show 10 / 20 EMAs",      group=grp_ema)
+ema10_len = input.int(10,    "Fast EMA Length",          minval=1,  group=grp_ema)
+ema20_len = input.int(20,    "Slow EMA Length",          minval=1,  group=grp_ema)
+show50EMA = input.bool(true,  "Show 50 EMA",             group=grp_ema)
+ema50_len = input.int(50,    "50 EMA Length",            minval=1,  group=grp_ema)
+
+grp_vol   = "Volume Settings"
+volLen    = input.int(20,   "Volume Avg Length",        minval=5,  maxval=50,  group=grp_vol)
+dryVolThr = input.float(0.7,"Drying Volume Threshold",  minval=0.3, maxval=1.0, step=0.05, group=grp_vol)
+
+grp_disp  = "Display"
+showCup   = input.bool(true,  "Show Cup Background",       group=grp_disp)
+showScore = input.bool(true,  "Show Quality Score",        group=grp_disp)
+showChan  = input.bool(true,  "Show Contraction Channels", group=grp_disp)
+
+grp_fund  = "Fundamentals Table"
+showFund  = input.bool(true, "Show Fundamentals Table", group=grp_fund)
+
+grp_anchor  = "Anchor Analysis"
+useAnchor   = input.bool(false, "Pin analysis to a specific bar", group=grp_anchor)
+anchorTime  = input.time(defval=timestamp("2020-01-01 00:00"), title="Anchor Date/Time", group=grp_anchor)
+
+// ─────────────────────────────────────────────
+// EMAs
+// ─────────────────────────────────────────────
+fast_length_1 = input.int(10, title="Fast EMA Period", minval=1)
+slow_length_1 = input.int(20, title="Slow EMA Period", minval=1)
+
+ema10 = ta.ema(close, fast_length_1)
+ema20 = ta.ema(close, slow_length_1)
+ema50 = ta.ema(close, ema50_len)
+
+plot(showEMA   ? ema10 : na, "EMA 10", color=color.new(color.blue,   0), linewidth=1)
+plot(showEMA   ? ema20 : na, "EMA 20", color=color.new(color.orange, 0), linewidth=1)
+plot(show50EMA ? ema50 : na, "EMA 50", color=color.new(color.red,    0), linewidth=2)
+
+// ─────────────────────────────────────────────
+// PIVOT HIGHS / LOWS
+// ─────────────────────────────────────────────
+ph = ta.pivothigh(high, pivotBars, pivotBars)
+pl = ta.pivotlow (low,  pivotBars, pivotBars)
+
+// ─────────────────────────────────────────────
+// CONTRACTION DETECTION
+// ─────────────────────────────────────────────
+var array<float> ph_vals = array.new<float>(0)
+var array<int>   ph_bars = array.new<int>(0)
+var array<float> pl_vals = array.new<float>(0)
+var array<int>   pl_bars = array.new<int>(0)
+
+if not na(ph)
+    ph_vals.push(ph)
+    ph_bars.push(bar_index - pivotBars)
+
+if not na(pl)
+    pl_vals.push(pl)
+    pl_bars.push(bar_index - pivotBars)
+
+// Fix RE10045: split the while condition so array.get is never called on an empty array
+while ph_bars.size() > 0
+    if bar_index - ph_bars.get(0) <= lookback
+        break
+    ph_vals.shift()
+    ph_bars.shift()
+
+while pl_bars.size() > 0
+    if bar_index - pl_bars.get(0) <= lookback
+        break
+    pl_vals.shift()
+    pl_bars.shift()
+
+// ─────────────────────────────────────────────
+// CONTRACTION SCORE FUNCTION
+// ─────────────────────────────────────────────
+f_contractionScore() =>
+    ph_n  = ph_vals.size()
+    pl_n  = pl_vals.size()
+    score = 0
+    valid = true
+    if ph_n >= 2
+        for i = 0 to ph_n - 2
+            if ph_vals.get(i + 1) < ph_vals.get(i)
+                score += 1
+            else
+                valid := false
+                break
+    if pl_n >= 2
+        for i = 0 to pl_n - 2
+            if pl_vals.get(i + 1) > pl_vals.get(i)
+                score += 1
+            else
+                valid := false
+                break
+    [score, valid, ph_n, pl_n]
+
+[contrScore, contrValid, ph_count, pl_count] = f_contractionScore()
+numContractions = math.min(ph_count - 1, pl_count - 1)
+
+// ─────────────────────────────────────────────
+// VOLUME — DRYING SCORE
+// ─────────────────────────────────────────────
+volSMA   = ta.sma(volume, volLen)
+volRatio = volume / volSMA
+isDryVol = volRatio < dryVolThr
+
+dryCount = 0
+for i = 0 to lookback - 1
+    if volume[i] < volSMA[i] * dryVolThr
+        dryCount += 1
+dryVolScore = math.round(dryCount / lookback * 100)
+
+// ─────────────────────────────────────────────
+// CUP GEOMETRY
+// ─────────────────────────────────────────────
+ph_n = ph_vals.size()
+pl_n = pl_vals.size()
+
+rimHigh  = ta.highest(high, lookback)
+cupBase  = ta.lowest(low,  lookback)
+cupDepth = rimHigh > 0 ? (rimHigh - cupBase) / rimHigh * 100 : 0.0
+
+breakoutPivot = ph_n > 0 ? ph_vals.get(ph_n - 1) : na
+pivotBarIdx   = ph_n > 0 ? ph_bars.get(ph_n - 1) : na
+
+// ─────────────────────────────────────────────
+// VCP QUALITY SCORE  (0–100)
+// ─────────────────────────────────────────────
+contrPts = math.min(numContractions * 10, 40)
+volPts   = math.round(dryVolScore * 30 / 100)
+
+depthPts = 0
+if cupDepth >= 15 and cupDepth <= 35
+    depthPts := 15
+else if cupDepth >= 10 and cupDepth < 15
+    depthPts := 10
+else if cupDepth > 35 and cupDepth <= 50
+    depthPts := 7
+else if cupDepth > 5 and cupDepth < 10
+    depthPts := 5
+
+emaPts = 0
+if close > ema10 and close > ema20
+    emaPts := 15
+else if close > ema20
+    emaPts := 8
+else if close > ema10
+    emaPts := 4
+
+qualityScore = contrPts + volPts + depthPts + emaPts
+
+// ─────────────────────────────────────────────
+// PATTERN VALIDATION
+// ─────────────────────────────────────────────
+isVCP = contrValid and numContractions >= minContr and qualityScore >= 30
+
+// ─────────────────────────────────────────────
+// ANCHOR BAR DETECTION
+// ─────────────────────────────────────────────
+// First bar at or after the selected anchor time
+isAnchorBar = useAnchor and time >= anchorTime and (bar_index == 0 or time[1] < anchorTime)
+// Draw at anchor bar when pinning, otherwise draw at last bar
+drawHere    = useAnchor ? isAnchorBar : barstate.islast
+
+// ─────────────────────────────────────────────
+// DRAWING OBJECTS
+// ─────────────────────────────────────────────
+var array<box>   cupBoxes   = array.new<box>(0)
+var array<line>  cupLines   = array.new<line>(0)
+var array<label> cupLabels  = array.new<label>(0)
+var label  scoreLabel = na
+var line   pivotLine  = na
+
+if drawHere
+    for b in cupBoxes
+        b.delete()
+    cupBoxes.clear()
+
+    for l in cupLines
+        l.delete()
+    cupLines.clear()
+
+    for lbl in cupLabels
+        lbl.delete()
+    cupLabels.clear()
+
+    scoreLabel.delete()
+    pivotLine.delete()
+
+    if showCup
+        segments = 20
+        wStart   = bar_index - lookback
+        wEnd     = bar_index
+        halfW    = float(lookback) / 2.0
+        midX     = wStart + halfW
+        depth    = rimHigh - cupBase
+        cupColor = color.new(color.teal, 82)
+        rimColor = color.new(color.teal, 60)
+
+        for s = 0 to segments - 1
+            x1    = int(wStart + s       * lookback / segments)
+            x2    = int(wStart + (s + 1) * lookback / segments)
+            t1    = (float(x1) - midX) / halfW
+            t2    = (float(x2) - midX) / halfW
+            yBot1 = cupBase + depth * t1 * t1
+            yBot2 = cupBase + depth * t2 * t2
+            cupBoxes.push(box.new(x1, rimHigh, x2, math.min(yBot1, yBot2), bgcolor=cupColor, border_color=color.new(color.teal, 90)))
+
+        cupLines.push(line.new(wStart, rimHigh, wEnd, rimHigh, color=rimColor, width=2, style=line.style_dotted))
+
+    if showChan and ph_count >= 2 and pl_count >= 2
+        uX1 = ph_bars.get(0)
+        uY1 = ph_vals.get(0)
+        uX2 = ph_bars.get(ph_count - 1)
+        uY2 = ph_vals.get(ph_count - 1)
+        lX1 = pl_bars.get(0)
+        lY1 = pl_vals.get(0)
+        lX2 = pl_bars.get(pl_count - 1)
+        lY2 = pl_vals.get(pl_count - 1)
+
+        cupLines.push(line.new(uX1, uY1, uX2 + 5, uY2, extend=extend.right, color=color.new(color.orange, 30), width=2, style=line.style_dashed))
+        cupLines.push(line.new(lX1, lY1, lX2 + 5, lY2, extend=extend.right, color=color.new(color.aqua,   30), width=2, style=line.style_dashed))
+
+        chanColor  = color.new(color.yellow, 88)
+        labelOffset = (rimHigh - cupBase) * 0.03
+        for i = 0 to math.min(ph_count, pl_count) - 2
+            zX1 = math.max(ph_bars.get(i), pl_bars.get(i))
+            zX2 = math.min(ph_bars.get(i + 1), pl_bars.get(i + 1))
+            if zX2 > zX1
+                cupBoxes.push(box.new(zX1, ph_vals.get(i), zX2, pl_vals.get(i), bgcolor=chanColor, border_color=color.new(color.yellow, 70), border_width=1))
+                cupLabels.push(label.new(int((zX1 + zX2) / 2), rimHigh + labelOffset, text="C" + str.tostring(i + 1), color=color.new(color.yellow, 20), textcolor=color.black, style=label.style_label_down, size=size.small))
+
+    if isVCP and not na(breakoutPivot)
+        pivotLine := line.new(pivotBarIdx, breakoutPivot, bar_index + 10, breakoutPivot, extend=extend.right, color=color.new(color.lime, 0), width=2, style=line.style_solid)
+
+    if showScore
+        scoreColor = isVCP ? (qualityScore >= 70 ? color.rgb(0, 100, 0) : color.new(color.orange, 40)) : color.new(color.gray, 20)
+        labelTxt   = (isVCP ? "VCP DETECTED" : "Watching...") + "\nScore : " + str.tostring(qualityScore) + "/100\nContractions: C" + str.tostring(numContractions) + "\nDry Vol : " + str.tostring(dryVolScore) + "%\nCup Depth: " + str.tostring(math.round(cupDepth, 1)) + "%"
+        scoreLabel := label.new(bar_index + 2, high, text=labelTxt, color=scoreColor, textcolor=color.white, style=label.style_label_left, size=size.normal)
+
+// ─────────────────────────────────────────────
+// BREAKOUT SIGNAL
+// ─────────────────────────────────────────────
+breakout = isVCP and not na(breakoutPivot) and ta.crossover(close, breakoutPivot)
+plotshape(breakout, title="Breakout", location=location.abovebar, style=shape.triangleup, size=size.normal, color=color.lime, text="BO")
+
+// VOLUME BAR COLOUR — disabled; contraction zones shown via yellow boxes instead
+// barcolor(isDryVol ? color.new(color.gray, 40) : na)
+
+// ─────────────────────────────────────────────
+// BACKGROUND FLASH
+// ─────────────────────────────────────────────
+bgcolor(isVCP ? color.new(color.teal, 94) : na, title="VCP Background")
+
+// ─────────────────────────────────────────────
+// TABLE — live score card
+// ─────────────────────────────────────────────
+var table scoreTable = table.new(position.bottom_right, 2, 6, border_color=color.white, border_width=1, frame_color=color.white, frame_width=1)
+
+if barstate.islast
+    scoreColor2 = qualityScore >= 70 ? color.green : qualityScore >= 45 ? color.orange : color.red
+
+    table.cell(scoreTable, 0, 0, "VCP Score",    text_color=color.white, bgcolor=color.black, text_size=size.small)
+    table.cell(scoreTable, 1, 0, str.tostring(qualityScore) + "/100",        text_color=color.white, bgcolor=color.black, text_size=size.small)
+    table.cell(scoreTable, 0, 1, "Contractions", text_color=color.white, bgcolor=color.black, text_size=size.small)
+    table.cell(scoreTable, 1, 1, "C" + str.tostring(numContractions),        text_color=color.white, bgcolor=color.black, text_size=size.small)
+    table.cell(scoreTable, 0, 2, "Dry Vol %",    text_color=color.white, bgcolor=color.black, text_size=size.small)
+    table.cell(scoreTable, 1, 2, str.tostring(dryVolScore) + "%",            text_color=color.white, bgcolor=color.black, text_size=size.small)
+    table.cell(scoreTable, 0, 3, "Cup Depth",    text_color=color.white, bgcolor=color.black, text_size=size.small)
+    table.cell(scoreTable, 1, 3, str.tostring(math.round(cupDepth, 1)) + "%", text_color=color.white, bgcolor=color.black, text_size=size.small)
+    table.cell(scoreTable, 0, 4, "Pivot",        text_color=color.white, bgcolor=color.black, text_size=size.small)
+    table.cell(scoreTable, 1, 4, na(breakoutPivot) ? "—" : str.tostring(math.round(breakoutPivot, 2)), text_color=color.white, bgcolor=color.black, text_size=size.small)
+    table.cell(scoreTable, 0, 5, "Pattern",      text_color=color.white, bgcolor=color.black, text_size=size.small)
+    table.cell(scoreTable, 1, 5, isVCP ? "ACTIVE" : "NONE",                  text_color=color.white, bgcolor=color.black, text_size=size.small)
+
+// ─────────────────────────────────────────────
+// FUNDAMENTALS — data fetch
+// ─────────────────────────────────────────────
+f_eps  = request.financial(syminfo.tickerid, "EARNINGS_PER_SHARE", "FQ", barmerge.gaps_on)
+f_rev  = request.financial(syminfo.tickerid, "TOTAL_REVENUE",       "FQ")
+f_oin  = request.financial(syminfo.tickerid, "OPER_INCOME",         "FQ")
+f_pe   = request.financial(syminfo.tickerid, "PRICE_EARNINGS",      "FQ")
+f_roe  = request.financial(syminfo.tickerid, "ROE",                 "FY")
+f_mcap = request.financial(syminfo.tickerid, "MARKET_CAP",          "FQ")
+
+var array<float> q_eps  = array.new<float>(0)
+var array<float> q_rev  = array.new<float>(0)
+var array<float> q_oin  = array.new<float>(0)
+var array<float> q_pe   = array.new<float>(0)
+var array<int>   q_time = array.new<int>(0)
+var float        last_roe  = na
+var float        last_mcap = na
+
+if not na(f_roe)
+    last_roe := f_roe
+if not na(f_mcap)
+    last_mcap := f_mcap
+
+// On each new quarterly EPS report, snapshot all fields
+if not na(f_eps)
+    q_eps.unshift(f_eps)
+    q_rev.unshift(f_rev)
+    q_oin.unshift(f_oin)
+    q_pe.unshift(f_pe)
+    q_time.unshift(time)
+    if q_eps.size()  > 9
+        q_eps.pop()
+    if q_rev.size()  > 9
+        q_rev.pop()
+    if q_oin.size()  > 9
+        q_oin.pop()
+    if q_pe.size()   > 9
+        q_pe.pop()
+    if q_time.size() > 9
+        q_time.pop()
+
+// ─────────────────────────────────────────────
+// FUNDAMENTALS — helpers
+// ─────────────────────────────────────────────
+f_qPct(float curr, float prev) =>
+    not na(curr) and not na(prev) and prev != 0 ? (curr - prev) / math.abs(prev) * 100 : float(na)
+
+f_pctStr(float v) =>
+    na(v) ? "—" : (v >= 0 ? "+" : "") + str.tostring(math.round(v)) + "%"
+
+f_qlbl(int t) =>
+    result = "—"
+    if not na(t)
+        m  = month(t)
+        y  = year(t) % 100
+        ys = y < 10 ? "0" + str.tostring(y) : str.tostring(y)
+        qm = m <= 3 ? "Mar" : m <= 6 ? "Jun" : m <= 9 ? "Sep" : "Dec"
+        result := qm + "-" + ys
+    result
+
+f_chgClr(float v) =>
+    na(v) ? color.white : v > 0 ? color.rgb(80, 200, 120) : color.rgb(220, 80, 80)
+
+// ─────────────────────────────────────────────
+// FUNDAMENTALS — table (top left, 9 col × 8 row)
+// ─────────────────────────────────────────────
+var table fundTable = table.new(position.top_left, 9, 8,
+     border_color=color.new(color.gray, 50), border_width=1,
+     frame_color=color.new(color.gray, 30), frame_width=1)
+
+FT_H  = color.rgb(25,  35,  55)
+FT_R0 = color.rgb(15,  20,  35)
+FT_R1 = color.rgb(20,  28,  45)
+FT_W  = color.white
+FT_Y  = color.rgb(220, 190, 60)
+
+if barstate.islast and showFund
+    // Row 0: ticker | mcap | roe header
+    mcapStr = na(last_mcap) ? "—" : str.tostring(math.round(last_mcap / 1e7)) + " Cr"
+    roeStr  = na(last_roe)  ? "—" : str.tostring(math.round(last_roe  * 100, 1)) + "%"
+    hdr     = syminfo.ticker + "  |  mcap " + mcapStr + "  |  roe " + roeStr
+    table.cell(fundTable, 0, 0, hdr, text_color=FT_W, bgcolor=FT_H, text_size=size.small, text_halign=text.align_left)
+    for c = 1 to 8
+        table.cell(fundTable, c, 0, "", bgcolor=FT_H)
+    table.merge_cells(fundTable, 0, 0, 8, 0)
+
+    // Row 1: sector | industry
+    secStr = syminfo.sector + "  |  " + syminfo.industry
+    table.cell(fundTable, 0, 1, secStr, text_color=FT_Y, bgcolor=FT_H, text_size=size.tiny, text_halign=text.align_left)
+    for c = 1 to 8
+        table.cell(fundTable, c, 1, "", bgcolor=FT_H)
+    table.merge_cells(fundTable, 0, 1, 8, 1)
+
+    // Row 2: column headers
+    cols = array.from("FQ", "EPS", "YoY", "QoQ", "Sales (Cr)", "YoY", "QoQ", "OPM%", "P/E")
+    for c = 0 to 8
+        table.cell(fundTable, c, 2, cols.get(c), text_color=FT_Y, bgcolor=FT_H, text_size=size.tiny)
+
+    // Rows 3-7: up to 5 quarters of data
+    nq = q_eps.size()
+    for i = 0 to math.min(nq, 5) - 1
+        row = 3 + i
+        bgc = i % 2 == 0 ? FT_R0 : FT_R1
+        sz  = size.tiny
+
+        eps  = i     < q_eps.size()  ? q_eps.get(i)      : float(na)
+        rev  = i     < q_rev.size()  ? q_rev.get(i)      : float(na)
+        oin  = i     < q_oin.size()  ? q_oin.get(i)      : float(na)
+        pe   = i     < q_pe.size()   ? q_pe.get(i)       : float(na)
+        qt   = i     < q_time.size() ? q_time.get(i)     : int(na)
+        epsp = (i+1) < q_eps.size()  ? q_eps.get(i + 1)  : float(na)
+        epsy = (i+4) < q_eps.size()  ? q_eps.get(i + 4)  : float(na)
+        revp = (i+1) < q_rev.size()  ? q_rev.get(i + 1)  : float(na)
+        revy = (i+4) < q_rev.size()  ? q_rev.get(i + 4)  : float(na)
+
+        opm          = not na(rev) and rev != 0 ? oin / rev * 100 : float(na)
+        eps_yoy_pct  = f_qPct(eps, epsy)
+        eps_qoq_pct  = f_qPct(eps, epsp)
+        rev_yoy_pct  = f_qPct(rev, revy)
+        rev_qoq_pct  = f_qPct(rev, revp)
+
+        epsStr = na(eps) ? "—" : str.tostring(math.round(eps, 1))
+        revStr = na(rev) ? "—" : str.tostring(math.round(rev / 1e7, 1))
+        opmStr = na(opm) ? "—" : str.tostring(math.round(opm, 1)) + "%"
+        peStr  = na(pe)  ? "—" : str.tostring(math.round(pe,  1))
+
+        table.cell(fundTable, 0, row, f_qlbl(qt),              text_color=FT_W,                   bgcolor=bgc, text_size=sz)
+        table.cell(fundTable, 1, row, epsStr,                   text_color=FT_W,                   bgcolor=bgc, text_size=sz)
+        table.cell(fundTable, 2, row, f_pctStr(eps_yoy_pct),   text_color=f_chgClr(eps_yoy_pct),  bgcolor=bgc, text_size=sz)
+        table.cell(fundTable, 3, row, f_pctStr(eps_qoq_pct),   text_color=f_chgClr(eps_qoq_pct),  bgcolor=bgc, text_size=sz)
+        table.cell(fundTable, 4, row, revStr,                   text_color=FT_W,                   bgcolor=bgc, text_size=sz)
+        table.cell(fundTable, 5, row, f_pctStr(rev_yoy_pct),   text_color=f_chgClr(rev_yoy_pct),  bgcolor=bgc, text_size=sz)
+        table.cell(fundTable, 6, row, f_pctStr(rev_qoq_pct),   text_color=f_chgClr(rev_qoq_pct),  bgcolor=bgc, text_size=sz)
+        table.cell(fundTable, 7, row, opmStr,                   text_color=FT_W,                   bgcolor=bgc, text_size=sz)
+        table.cell(fundTable, 8, row, peStr,                    text_color=FT_W,                   bgcolor=bgc, text_size=sz)
