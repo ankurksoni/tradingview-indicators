@@ -41,8 +41,12 @@ string G_VIS = "Visuals"
 bool  i_colorSetup = input.bool(true,         "Highlight setup candles",     group=G_VIS)
 color i_setupColor = input.color(color.black, "Setup candle color",          group=G_VIS)
 color i_divDot     = input.color(color.rgb(red = 173, green = 238, blue = 179, transp = 0),   "CVD Div dot color",           group=G_VIS)
-float i_arrowGap   = input.float(3.0, "Dot gap below candle (%)", minval=0.5, maxval=20.0, step=0.5, group=G_VIS,
-     tooltip="How far below the bar low the dot is drawn, as a % of the bar low price.") / 100
+float i_arrowGap   = input.float(3.0, "CVD dot gap below candle (%)", minval=0.5, maxval=20.0, step=0.5, group=G_VIS,
+     tooltip="How far below the bar low the CVD dot is drawn, as a % of the bar low price.") / 100
+float i_rsGap      = input.float(9.0, "RS score/dot gap below candle (%)", minval=3.0, maxval=40.0, step=0.5, group=G_VIS,
+     tooltip="How far below the bar low the RS score label and RS blue dot are drawn. Keep this larger than the CVD dot gap.") / 100
+int   i_rsThresh   = input.int(80, "Show RS score only when ≥", minval=1, maxval=99, step=1, group=G_VIS,
+     tooltip="RS score (0–100 percentile rank vs its own 52-week history) is only displayed when it meets or exceeds this value.")
 
 string G_EMA = "EMAs"
 bool  i_show10   = input.bool(true,                      "Show 10 EMA",    inline="e10", group=G_EMA)
@@ -113,6 +117,14 @@ float stockChg = nz(close    / close[i_rsPeriod]    - 1, 0.0)
 float idxChg   = nz(idxClose / idxClose[i_rsPeriod] - 1, 0.0)
 bool  isOut    = stockChg > idxChg
 
+// RS Line (ratio) used for 52-week high detection and percentile scoring
+float rsLine       = nz(close / idxClose, 1.0)
+// 52-week percentile rank: how strong this RS line is vs its own past year (0–100)
+float rsScore      = math.round(ta.percentrank(rsLine, 252))
+// RS Line new 52-week high: current value exceeds the max of the prior 252 bars
+float _rs52wPrev    = ta.highest(rsLine, 252)[1]
+bool  rsLineNewHigh = not na(_rs52wPrev) and rsLine >= _rs52wPrev
+
 // ═══════════════════════════════════════════════════════════════
 //  BOLLINGER %BANDWIDTH
 //  Formula: (Upper − Lower) / Basis × 100
@@ -145,6 +157,14 @@ bool  enoughDivs = divCount >= i_minDivs
 bool aboveEma20  = close > ema20
 bool bbwNarrow   = bbWidth < i_bbwThresh
 bool setupActive = nearHigh and nearLow and enoughDivs and aboveEma20 and bbwNarrow
+
+// ─── RS Blue Dot conditions ───────────────────────────────────────
+// Forming a base: tight bandwidth while hugging the period high
+bool formingBase  = bbwNarrow and nearHigh
+// Breaking out of base: price just cleared the lookback-period high
+bool breakingOut  = close > ta.highest(close, i_lookback)[1]
+// Blue dot fires when RS Line hits a 52-week high AND stock is basing or breaking out
+bool rsBlueDotCond = rsLineNewHigh and (formingBase or breakingOut)
 
 // ═══════════════════════════════════════════════════════════════
 //  QUARTERLY FINANCIALS TABLE
@@ -246,6 +266,32 @@ if barstate.islast
 
 if bullishCvdDiv
     label.new(x=bar_index, y=low*(1.0-i_arrowGap), text="", style=label.style_circle, color=i_divDot, size=size.small)
+
+// RS Score label — shown only on setup candles and the current (last) bar, when score ≥ threshold
+bool onSetupOrLast = setupActive or barstate.islast
+float _rsScoreY    = low * (1.0 - i_rsGap)               // score text: deepest
+float _rsDotY      = low * (1.0 - i_rsGap * 0.6)         // blue dot: between CVD dot and score
+
+if i_showRS and onSetupOrLast and rsScore >= i_rsThresh
+    // Stack each character vertically to simulate 90° rotation
+    string _rsRaw  = str.tostring(int(rsScore))
+    string _rsVert = ""
+    int    _rsLen  = str.length(_rsRaw)
+    for i = 0 to _rsLen - 1
+        _rsVert += str.substring(_rsRaw, i, i + 1) + (i < _rsLen - 1 ? "\n" : "")
+    label.new(x=bar_index, y=low * (1.0 - i_rsGap * 3.5),
+         text=_rsVert,
+         style=label.style_none,
+         textcolor=color.new(color.gray, 10),
+         size=size.large,
+         text_font_family=font.family_monospace)
+
+// RS Blue Dot — sky blue circle, on setup candles / current bar when conditions are met
+color _rsBlue = color.rgb(0, 191, 255)
+if i_showRS and rsBlueDotCond and onSetupOrLast
+    label.new(x=bar_index, y=_rsDotY,
+         text="", style=label.style_circle,
+         color=_rsBlue, size=size.small)
 
 plot(i_show10 ? ema10 : na, "10 EMA", i_ema10Clr, linewidth=1)
 plot(i_show20 ? ema20 : na, "20 EMA", i_ema20Clr, linewidth=1)
