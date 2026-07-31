@@ -41,7 +41,7 @@ string G_VIS = "Visuals"
 bool  i_colorSetup = input.bool(true,         "Highlight setup candles",     group=G_VIS)
 color i_setupColor = input.color(color.black, "Setup candle color",          group=G_VIS)
 color i_divDot     = input.color(color.rgb(red = 173, green = 238, blue = 179, transp = 0),   "CVD Div dot color",           group=G_VIS)
-float i_arrowGap   = input.float(3.0, "CVD dot gap below candle (%)", minval=0.5, maxval=20.0, step=0.5, group=G_VIS,
+float i_arrowGap   = input.float(8.0, "CVD dot gap below candle (%)", minval=0.5, maxval=20.0, step=0.5, group=G_VIS,
      tooltip="How far below the bar low the CVD dot is drawn, as a % of the bar low price.") / 100
 float i_rsGap      = input.float(9.0, "RS score/dot gap below candle (%)", minval=3.0, maxval=40.0, step=0.5, group=G_VIS,
      tooltip="How far below the bar low the RS score label and RS blue dot are drawn. Keep this larger than the CVD dot gap.") / 100
@@ -265,7 +265,7 @@ if barstate.islast
 // ═══════════════════════════════════════════════════════════════
 
 if bullishCvdDiv
-    label.new(x=bar_index, y=low*(1.0-i_arrowGap), text="", style=label.style_circle, color=i_divDot, size=size.small)
+    label.new(x=bar_index, y=low*(1.0-i_arrowGap), text="", style=label.style_circle, color=i_divDot, size=size.tiny)
 
 // RS Score label — shown only on setup candles and the current (last) bar, when score ≥ threshold
 bool onSetupOrLast = setupActive or barstate.islast
