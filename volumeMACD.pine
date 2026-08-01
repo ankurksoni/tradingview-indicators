@@ -1,0 +1,78 @@
+//@version=6
+indicator("Volume MACD Histogram", shorttitle="Vol MACD", overlay=false)
+
+// Inputs
+maType       = input.string("EMA", title="MA Type", options=["EMA", "DEMA", "SMMA", "WMA", "DWMA", "VIDYA", "FRAMA", "LREG"])
+fastLength   = input.int(12, minval=1, title="Fast Length")
+slowLength   = input.int(26, minval=1, title="Slow Length")
+signalLength = input.int(9,  minval=1, title="Signal Length")
+
+// --- MA implementations ---
+
+dema(src, len) =>
+    e1 = ta.ema(src, len)
+    2.0 * e1 - ta.ema(e1, len)
+
+dwma(src, len) =>
+    w1 = ta.wma(src, len)
+    2.0 * w1 - ta.wma(w1, len)
+
+// VIDYA: CMO-scaled EMA (Chande's Variable Index Dynamic Average)
+vidya(src, len) =>
+    alpha  = 2.0 / (len + 1)
+    sc     = math.abs(ta.cmo(src, len)) / 100.0
+    k      = alpha * sc
+    var float v = na
+    v := na(v[1]) ? src : v[1] + k * (src - v[1])
+    v
+
+// FRAMA: Fractal Adaptive Moving Average
+frama(src, len) =>
+    half = math.max(2, len / 2)
+    h1   = ta.highest(src, half)
+    l1   = ta.lowest(src, half)
+    h2   = ta.highest(src, half)[half]
+    l2   = ta.lowest(src, half)[half]
+    h3   = ta.highest(src, len)
+    l3   = ta.lowest(src, len)
+    n1   = (h1 - l1) / half
+    n2   = (h2 - l2) / half
+    n3   = (h3 - l3) / len
+    dim  = (n1 + n2 > 0 and n3 > 0) ? (math.log(n1 + n2) - math.log(n3)) / math.log(2) : 1.0
+    a    = math.max(0.01, math.min(1.0, math.exp(-4.6 * (dim - 1.0))))
+    var float f = na
+    f := na(f[1]) ? src : a * src + (1.0 - a) * f[1]
+    f
+
+applyMA(src, len, t) =>
+    switch t
+        "EMA"   => ta.ema(src, len)
+        "DEMA"  => dema(src, len)
+        "SMMA"  => ta.rma(src, len)
+        "WMA"   => ta.wma(src, len)
+        "DWMA"  => dwma(src, len)
+        "VIDYA" => vidya(src, len)
+        "FRAMA" => frama(src, len)
+        "LREG"  => ta.linreg(src, len, 0)
+        =>         ta.ema(src, len)
+
+// Volume MACD
+fastMA     = applyMA(volume, fastLength,  maType)
+slowMA     = applyMA(volume, slowLength,  maType)
+macdLine   = fastMA - slowMA
+signalLine = applyMA(macdLine, signalLength, maType)
+histogram  = macdLine - signalLine
+
+// Histogram Colors
+histColor =
+     histogram >= 0 ?
+         (histogram > histogram[1] ? color.lime : color.green) :
+         (histogram < histogram[1] ? color.red  : color.maroon)
+
+// Plots
+plot(histogram,
+     title="Histogram",
+     style=plot.style_columns,
+     color=histColor)
+
+hline(0, "Zero", color=color.gray)

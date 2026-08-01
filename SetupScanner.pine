@@ -50,9 +50,13 @@ int   i_rsThresh   = input.int(80, "Show RS score only when ≥", minval=1, maxv
 
 string G_EMA = "EMAs"
 bool  i_show10   = input.bool(true,                      "Show 10 EMA",    inline="e10", group=G_EMA)
-color i_ema10Clr = input.color(color.green,              "",               inline="e10", group=G_EMA)
+color i_ema10Clr = input.color(color.black,              "",               inline="e10", group=G_EMA)
 bool  i_show20   = input.bool(true,                      "Show 20 EMA",    inline="e20", group=G_EMA)
-color i_ema20Clr = input.color(color.red,                "",               inline="e20", group=G_EMA)
+color i_ema20Clr = input.color(color.rgb(0, 191, 255),  "",               inline="e20", group=G_EMA)
+bool  i_show50   = input.bool(true,                      "Show 50 EMA",    inline="e50", group=G_EMA)
+color i_ema50Clr = input.color(color.green,              "",               inline="e50", group=G_EMA)
+bool  i_show200  = input.bool(true,                      "Show 200 EMA",   inline="e200", group=G_EMA)
+color i_ema200Clr = input.color(color.red,               "",               inline="e200", group=G_EMA)
 bool  i_showRS   = input.bool(true,                      "Show RS line",   inline="rs",  group=G_EMA)
 string i_idxSym  = input.symbol("NSE:NIFTYSMLCAP250",   "vs",             inline="rs",  group=G_EMA)
 int   i_rsPeriod = input.int(20, "RS Period", minval=5, maxval=200,        inline="rs",  group=G_EMA)
@@ -105,8 +109,10 @@ bool bullishCvdDiv = close > open and delta < 0
 //  EMAs
 // ═══════════════════════════════════════════════════════════════
 
-float ema10 = ta.ema(close, 10)
-float ema20 = ta.ema(close, 20)
+float ema10  = ta.ema(close, 10)
+float ema20  = ta.ema(close, 20)
+float ema50  = ta.ema(close, 50)
+float ema200 = ta.ema(close, 200)
 
 // ═══════════════════════════════════════════════════════════════
 //  RELATIVE STRENGTH vs BENCHMARK
@@ -293,8 +299,10 @@ if i_showRS and rsBlueDotCond and onSetupOrLast
          text="", style=label.style_circle,
          color=_rsBlue, size=size.small)
 
-plot(i_show10 ? ema10 : na, "10 EMA", i_ema10Clr, linewidth=1)
-plot(i_show20 ? ema20 : na, "20 EMA", i_ema20Clr, linewidth=1)
+plot(i_show10  ? ema10  : na, "10 EMA",  i_ema10Clr,  linewidth=1)
+plot(i_show20  ? ema20  : na, "20 EMA",  i_ema20Clr,  linewidth=1)
+plot(i_show50  ? ema50  : na, "50 EMA",  i_ema50Clr,  linewidth=1)
+plot(i_show200 ? ema200 : na, "200 EMA", i_ema200Clr, linewidth=1)
 
 color _rsClr = isOut ? color.new(color.green, 0) : color.new(color.red, 0)
 plotshape(i_showRS, "RS Line", shape.square, location.top, _rsClr, size=size.small)
