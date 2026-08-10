@@ -48,6 +48,11 @@ float i_rsGap      = input.float(9.0, "RS score/dot gap below candle (%)", minva
 int   i_rsThresh   = input.int(80, "Show RS score only when ≥", minval=1, maxval=99, step=1, group=G_VIS,
      tooltip="RS score (0–100 percentile rank vs its own 52-week history) is only displayed when it meets or exceeds this value.")
 
+string G_AVWAP = "AVWAP"
+bool  i_showAvwap   = input.bool(true, "Show Anchored VWAP", group=G_AVWAP)
+int   i_anchorDate  = input.time(timestamp("30 Mar 2026 00:00 +0000"), "Anchor Date", group=G_AVWAP)
+color i_avwapColor  = input.color(color.orange, "AVWAP Color", group=G_AVWAP)
+
 string G_EMA = "EMAs"
 bool  i_show10   = input.bool(true,                      "Show 10 EMA",    inline="e10", group=G_EMA)
 color i_ema10Clr = input.color(color.black,              "",               inline="e10", group=G_EMA)
@@ -113,6 +118,25 @@ float ema10  = ta.ema(close, 10)
 float ema20  = ta.ema(close, 20)
 float ema50  = ta.ema(close, 50)
 float ema200 = ta.ema(close, 200)
+
+// ═══════════════════════════════════════════════════════════════
+//  ANCHORED VWAP
+// ═══════════════════════════════════════════════════════════════
+
+bool  _afterAnchor = time >= i_anchorDate
+bool  _newAnchor   = _afterAnchor and not _afterAnchor[1]
+
+var float _cumPV  = na
+var float _cumVol = na
+
+if _newAnchor
+    _cumPV  := hlc3 * volume
+    _cumVol := volume
+else if _afterAnchor
+    _cumPV  += hlc3 * volume
+    _cumVol += volume
+
+float anchoredVWAP = _afterAnchor ? _cumPV / _cumVol : na
 
 // ═══════════════════════════════════════════════════════════════
 //  RELATIVE STRENGTH vs BENCHMARK
@@ -186,6 +210,8 @@ color _flatClr  = i_darkMode ? color.new(color.yellow, 0)       : color.new(colo
 
 string _EPS_ID  = "EARNINGS_PER_SHARE_DILUTED"
 string _REV_ID  = "TOTAL_REVENUE"
+string _NI_ID   = "NET_INCOME"
+string _OI_ID   = "OPER_INCOME"
 
 _getFinancial(_id, _per) =>
     float _val = request.financial(syminfo.tickerid, _id, _per, barmerge.gaps_on, ignore_invalid_symbol=true)
@@ -202,11 +228,15 @@ float _revRef = request.financial(syminfo.tickerid, _REV_ID, i_finPer, barmerge.
 var array<int>   _dates   = array.new_int(i_dataSize)
 var array<float> _epsArr  = array.new_float(i_dataSize)
 var array<float> _revArr  = array.new_float(i_dataSize)
+var array<float> _niArr   = array.new_float(i_dataSize)
+var array<float> _oiArr   = array.new_float(i_dataSize)
 
 if not na(_revRef)
     _pushArray(_dates,  time)
     _pushArray(_epsArr, _getFinancial(_EPS_ID, i_finPer))
     _pushArray(_revArr, _getFinancial(_REV_ID, i_finPer))
+    _pushArray(_niArr,  _getFinancial(_NI_ID,  i_finPer))
+    _pushArray(_oiArr,  _getFinancial(_OI_ID,  i_finPer))
 
 // Free Float
 float _ff_raw   = nz(request.financial(syminfo.tickerid, "FLOAT_SHARES_OUTSTANDING", "FY"))
@@ -217,6 +247,14 @@ string _ff_str  = na(_ff) or nz(_ff) == 0 ? "" : str.tostring(math.round(_ff)) +
 float _mc_raw   = request.financial(syminfo.tickerid, "TOTAL_SHARES_OUTSTANDING", "FQ")
 float _mc       = _mc_raw * close / 10000000
 string _mc_str  = na(_mc) or nz(_mc) == 0 ? "" : str.tostring(math.round(_mc, 0)) + " Cr"
+
+// Valuation ratios — computed from raw financials (pre-computed ratio IDs unavailable for NSE)
+float _bvps     = request.financial(syminfo.tickerid, "BOOK_VALUE_PER_SHARE", "FQ", ignore_invalid_symbol=true)
+float _pb       = na(_bvps) or _bvps == 0 ? na : close / _bvps
+
+float _peg_fy   = request.financial(syminfo.tickerid, "PEG_RATIO", "FY", ignore_invalid_symbol=true)
+float _peg_fq   = request.financial(syminfo.tickerid, "PEG_RATIO", "FQ", ignore_invalid_symbol=true)
+float _peg      = na(_peg_fq) ? _peg_fy : _peg_fq
 
 string _topLeftVal = i_topLeft == "FF" ? _ff_str : _mc_str
 
@@ -245,26 +283,45 @@ _ftYoY(_t, _col, _row, _arr, _i, _cmpr) =>
     string _txt = na(_dif) ? "●" : i_miniMode ? "●" : _sym
     table.cell(_t, _col, _row, _txt, text_halign=text.align_right, text_color=_clr, text_size=i_tblSize)
 
-var table _finTbl = table.new(i_tblPosY + "_" + i_tblPosX, columns=4, rows=i_dataSize,
+var table _finTbl = table.new(i_tblPosY + "_" + i_tblPosX, columns=6, rows=i_dataSize + 2,
      bgcolor=_bgClr, frame_color=_frameCol, frame_width=1, border_color=_frameCol, border_width=1)
 
 if barstate.islast
     if not i_miniMode
         _ftHead(_finTbl, 0, 0, "Quarter")
         _ftHead(_finTbl, 1, 0, "EPS")
-        _ftHead(_finTbl, 2, 0, i_finPer == "FY" ? "YoY" : "%Chg")
+        _ftHead(_finTbl, 2, 0, i_finPer == "FY" ? "YoY" : "EPS %Chg")
         _ftHead(_finTbl, 3, 0, i_finPer == "FY" ? "Sales YoY" : "Sales %Chg")
+        _ftHead(_finTbl, 4, 0, "NI %Chg")
+        _ftHead(_finTbl, 5, 0, "OI %Chg")
 
         for i = 0 to i_dataSize - 5
             _ftDate(_finTbl, 0, i+1, str.format("{0, date, MMM-yy}", array.get(_dates, i)))
             _ftVal(true,  _finTbl, 1, i+1, _epsArr, i)
             _ftYoY(_finTbl, 2, i+1, _epsArr, i, i_finPer == "FY" ? 1 : 4)
             _ftYoY(_finTbl, 3, i+1, _revArr, i, i_finPer == "FY" ? 1 : 4)
+            _ftYoY(_finTbl, 4, i+1, _niArr,  i, 1)
+            _ftYoY(_finTbl, 5, i+1, _oiArr,  i, 1)
     else
         for i = 0 to i_dataSize - 5
             _ftDate(_finTbl, 0, i+1, str.format("{0, date, MMM-yy}", array.get(_dates, i)))
             _ftYoY(_finTbl, 2, i+1, _epsArr, i, i_finPer == "FY" ? 1 : 4)
             _ftYoY(_finTbl, 3, i+1, _revArr, i, i_finPer == "FY" ? 1 : 4)
+            _ftYoY(_finTbl, 4, i+1, _niArr,  i, 1)
+            _ftYoY(_finTbl, 5, i+1, _oiArr,  i, 1)
+
+    string _mcFmt = na(_mc) or nz(_mc) == 0 ? "N/A" : "₹" + str.tostring(math.round(_mc, 0), "#,###") + " Cr"
+    int    _mcRow = i_dataSize - 3
+    string _pegFmt = na(_peg) ? "N/A" : str.tostring(math.round(_peg, 2))
+    string _pbFmt  = na(_pb)  ? "N/A" : str.tostring(math.round(_pb, 2)) + "x"
+
+    // Mkt Cap | value | PEG | value | P/B | value — single row
+    table.cell(_finTbl, 0, _mcRow, "Mkt Cap", bgcolor=_hdClr, text_color=_textClr, text_size=i_tblSize)
+    table.cell(_finTbl, 1, _mcRow, _mcFmt,    bgcolor=_bgClr, text_color=_textClr, text_size=i_tblSize)
+    table.cell(_finTbl, 2, _mcRow, "PEG",     bgcolor=_hdClr, text_color=_textClr, text_size=i_tblSize)
+    table.cell(_finTbl, 3, _mcRow, _pegFmt,   bgcolor=_bgClr, text_color=_textClr, text_size=i_tblSize)
+    table.cell(_finTbl, 4, _mcRow, "P/B",     bgcolor=_hdClr, text_color=_textClr, text_size=i_tblSize)
+    table.cell(_finTbl, 5, _mcRow, _pbFmt,    bgcolor=_bgClr, text_color=_textClr, text_size=i_tblSize)
 
 // ═══════════════════════════════════════════════════════════════
 //  VISUALS
@@ -303,6 +360,7 @@ plot(i_show10  ? ema10  : na, "10 EMA",  i_ema10Clr,  linewidth=1)
 plot(i_show20  ? ema20  : na, "20 EMA",  i_ema20Clr,  linewidth=1)
 plot(i_show50  ? ema50  : na, "50 EMA",  i_ema50Clr,  linewidth=1)
 plot(i_show200 ? ema200 : na, "200 EMA", i_ema200Clr, linewidth=1)
+plot(i_showAvwap and timeframe.isdaily ? anchoredVWAP : na, "Anchored VWAP", i_avwapColor, linewidth=2)
 
 color _rsClr = isOut ? color.new(color.green, 0) : color.new(color.red, 0)
 plotshape(i_showRS, "RS Line", shape.square, location.top, _rsClr, size=size.small)
