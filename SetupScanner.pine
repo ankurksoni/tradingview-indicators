@@ -38,9 +38,10 @@ float i_bbwThresh = input.float(15.0,"Bollinger Bandwidth Threshold (<)",    min
      tooltip="Bollinger %Bandwidth = (Upper − Lower) / Basis × 100. Below 15 = tight consolidation.")
 
 string G_VIS = "Visuals"
+bool  i_darkMode   = input.bool(true,         "Dark Mode",                   group=G_VIS, tooltip="Enable for dark chart themes. Adjusts table, labels, and default colors.")
 bool  i_colorSetup = input.bool(true,         "Highlight setup candles",     group=G_VIS)
-color i_setupColor = input.color(color.black, "Setup candle color",          group=G_VIS)
-color i_divDot     = input.color(color.rgb(red = 173, green = 238, blue = 179, transp = 0),   "CVD Div dot color",           group=G_VIS)
+color i_setupColor = input.color(color.new(#888888, 0), "Setup candle color", group=G_VIS)
+color i_divDot     = input.color(color.rgb(red = 173, green = 238, blue = 179, transp = 50),  "CVD Div dot color",           group=G_VIS)
 float i_arrowGap   = input.float(8.0, "CVD dot gap below candle (%)", minval=0.5, maxval=20.0, step=0.5, group=G_VIS,
      tooltip="How far below the bar low the CVD dot is drawn, as a % of the bar low price.") / 100
 float i_rsGap      = input.float(9.0, "RS score/dot gap below candle (%)", minval=3.0, maxval=40.0, step=0.5, group=G_VIS,
@@ -48,29 +49,41 @@ float i_rsGap      = input.float(9.0, "RS score/dot gap below candle (%)", minva
 int   i_rsThresh   = input.int(80, "Show RS score only when ≥", minval=1, maxval=99, step=1, group=G_VIS,
      tooltip="RS score (0–100 percentile rank vs its own 52-week history) is only displayed when it meets or exceeds this value.")
 
+bool  i_showTight      = input.bool(true,  "Highlight tight 3-bar zone",          group=G_VIS)
+int   i_tightLookback  = input.int(10, "Tight zone lookback bars", minval=1, maxval=50, group=G_VIS,
+     tooltip="Scan this many prior bars to find one whose high AND low are both within the tolerance % of the current candle's midpoint.")
+float i_tightPct       = input.float(1.5, "Tight zone tolerance % from median", minval=0.1, maxval=20.0, step=0.1, group=G_VIS,
+     tooltip="A lookback candle's high AND low must both be within this % of the current candle's midpoint (high+low)/2.") / 100
+color i_tightColor     = input.color(color.new(color.yellow, 50), "Tight zone color", group=G_VIS)
+
 string G_AVWAP = "AVWAP"
 bool  i_showAvwap   = input.bool(true, "Show Anchored VWAP", group=G_AVWAP)
 int   i_anchorDate  = input.time(timestamp("30 Mar 2026 00:00 +0000"), "Anchor Date", group=G_AVWAP)
-color i_avwapColor  = input.color(color.orange, "AVWAP Color", group=G_AVWAP)
+color i_avwapColor  = input.color(color.new(color.orange, 50), "AVWAP Color", group=G_AVWAP)
 
 string G_EMA = "EMAs"
-bool  i_show10   = input.bool(true,                      "Show 10 EMA",    inline="e10", group=G_EMA)
-color i_ema10Clr = input.color(color.black,              "",               inline="e10", group=G_EMA)
-bool  i_show20   = input.bool(true,                      "Show 20 EMA",    inline="e20", group=G_EMA)
-color i_ema20Clr = input.color(color.rgb(0, 191, 255),  "",               inline="e20", group=G_EMA)
-bool  i_show50   = input.bool(true,                      "Show 50 EMA",    inline="e50", group=G_EMA)
-color i_ema50Clr = input.color(color.green,              "",               inline="e50", group=G_EMA)
-bool  i_show200  = input.bool(true,                      "Show 200 EMA",   inline="e200", group=G_EMA)
-color i_ema200Clr = input.color(color.red,               "",               inline="e200", group=G_EMA)
+bool  i_show10   = input.bool(true,                                   "Show 10 EMA",    inline="e10", group=G_EMA)
+color i_ema10Clr = input.color(color.new(color.white, 5),            "",               inline="e10", group=G_EMA)
+bool  i_show20   = input.bool(true,                                   "Show 20 EMA",    inline="e20", group=G_EMA)
+color i_ema20Clr = input.color(color.new(color.yellow, 5),            "",               inline="e20", group=G_EMA)
+bool  i_show50   = input.bool(true,                                   "Show 50 EMA",    inline="e50", group=G_EMA)
+color i_ema50Clr = input.color(color.new(color.green, 5),            "",               inline="e50", group=G_EMA)
+bool  i_show200  = input.bool(true,                                   "Show 200 EMA",   inline="e200", group=G_EMA)
+color i_ema200Clr = input.color(color.new(color.red, 5),             "",               inline="e200", group=G_EMA)
 bool  i_showRS   = input.bool(true,                      "Show RS line",   inline="rs",  group=G_EMA)
 string i_idxSym  = input.symbol("NSE:NIFTYSMLCAP250",   "vs",             inline="rs",  group=G_EMA)
 int   i_rsPeriod = input.int(20, "RS Period", minval=5, maxval=200,        inline="rs",  group=G_EMA)
 
+string G_PRESS = "Minervini Pressure"
+bool  i_showPressure  = input.bool(true,  "Show pressure line at bottom of chart", group=G_PRESS)
+int   i_pressLookback = input.int(20,     "Pressure lookback bars", minval=1, maxval=200, group=G_PRESS)
+bool  i_pressWeighted = input.bool(false, "Body/range weighted",                group=G_PRESS,
+     tooltip="Off = classic up-volume vs down-volume. On = volume weighted by candle body/range ratio.")
+
 string G_FIN = "════ Quarterly Financials ════"
-bool   i_darkMode  = input.bool(false,    "Dark Mode",          group=G_FIN, tooltip="Enable for dark chart themes.")
 bool   i_miniMode  = input.bool(false,    "Mini Mode",          group=G_FIN, tooltip="Show traffic-light dots instead of values.")
 int    i_dataSize  = input.int(4,         "Quarters to show",   group=G_FIN, minval=1, maxval=12) + 5
-string i_tblSize   = input.string("normal","Table Size",        group=G_FIN, options=["tiny","small","normal","large","huge","auto"], inline="tbl")
+string i_tblSize   = input.string("small","Table Size",         group=G_FIN, options=["tiny","small","normal","large","huge","auto"], inline="tbl")
 string i_tblPosY   = input.string("bottom","↕",                 group=G_FIN, options=["top","middle","bottom"],                       inline="tbl")
 string i_tblPosX   = input.string("right", "↔",                 group=G_FIN, options=["left","center","right"],                       inline="tbl")
 string i_finPer    = input.string("FQ",   "Period",             group=G_FIN, options=["FQ","FY"], tooltip="FQ = quarterly, FY = annual.")
@@ -188,6 +201,39 @@ bool aboveEma20  = close > ema20
 bool bbwNarrow   = bbWidth < i_bbwThresh
 bool setupActive = nearHigh and nearLow and enoughDivs and aboveEma20 and bbwNarrow
 
+// ─── Tight 3-bar zone ─────────────────────────────────────────────
+// Scans i_tightLookback prior bars; fires if ANY one has high AND low within ±i_tightPct of current midpoint.
+// Additionally, the current candle must itself be within ±2×i_tightPct of the previous close.
+float _candleMid = (high + low) / 2
+bool  tightZone  = false
+for _ti = 1 to i_tightLookback
+    if math.abs(high[_ti] - _candleMid) / _candleMid <= i_tightPct and
+       math.abs(low[_ti]  - _candleMid) / _candleMid <= i_tightPct
+        tightZone := true
+        break
+tightZone := tightZone and math.abs(close - close[1]) / close[1] <= 2.0 * i_tightPct
+
+// ─── Minervini Pressure ───────────────────────────────────────────
+float _mpUpVol   = close > open ? volume : 0.0
+float _mpDnVol   = close < open ? volume : 0.0
+float _mpTotUp   = math.sum(_mpUpVol, i_pressLookback)
+float _mpTotDn   = math.sum(_mpDnVol, i_pressLookback)
+
+float _mpBodyWt  = (high - low) > 0 ? math.abs(close - open) / (high - low) : 0.0
+float _mpWUpVol  = close > open ? volume * _mpBodyWt : 0.0
+float _mpWDnVol  = close < open ? volume * _mpBodyWt : 0.0
+float _mpWTotUp  = math.sum(_mpWUpVol, i_pressLookback)
+float _mpWTotDn  = math.sum(_mpWDnVol, i_pressLookback)
+
+float _pressure  = i_pressWeighted ?
+     (_mpWTotUp + _mpWTotDn > 0 ? (_mpWTotUp - _mpWTotDn) / (_mpWTotUp + _mpWTotDn) * 100.0 : na) :
+     (_mpTotUp  + _mpTotDn  > 0 ? (_mpTotUp  - _mpTotDn)  / (_mpTotUp  + _mpTotDn)  * 100.0 : na)
+
+color _pressColor = _pressure > 30  ? color.green   :
+                   _pressure > 0    ? color.lime  :
+                   _pressure > -30  ? color.orange :
+                   color.red
+
 // ─── RS Blue Dot conditions ───────────────────────────────────────
 // Forming a base: tight bandwidth while hugging the period high
 bool formingBase  = bbwNarrow and nearHigh
@@ -202,7 +248,7 @@ bool rsBlueDotCond = rsLineNewHigh and (formingBase or breakingOut)
 
 color _frameCol = i_darkMode ? color.new(#999999, 50)           : color.rgb(241, 241, 241)
 color _textClr  = i_darkMode ? color.new(color.white, 0)        : color.new(color.black, 0)
-color _bgClr    = i_darkMode ? color.new(color.white, 100)      : color.new(color.black, 100)
+color _bgClr    = i_darkMode ? color.new(color.white, 100)      : color.new(#f0f0f0, 0)
 color _hdClr    = i_darkMode ? color.new(#444444, 0)            : color.new(#d0d0d0, 0)
 color _upClr    = i_darkMode ? color.new(color.lime, 0)         : color.new(color.rgb(31, 12, 239, 16), 0)
 color _dnClr    = i_darkMode ? color.new(color.red, 0)          : color.new(color.rgb(213, 27, 182), 10)
@@ -283,17 +329,31 @@ _ftYoY(_t, _col, _row, _arr, _i, _cmpr) =>
     string _txt = na(_dif) ? "●" : i_miniMode ? "●" : _sym
     table.cell(_t, _col, _row, _txt, text_halign=text.align_right, text_color=_clr, text_size=i_tblSize)
 
-var table _finTbl = table.new(i_tblPosY + "_" + i_tblPosX, columns=6, rows=i_dataSize + 2,
+_ftOmQoQ(_t, _col, _row, _oiArr, _revArr, _i) =>
+    float _oi1  = array.get(_oiArr, _i)
+    float _oi2  = array.get(_oiArr, _i + 1)
+    float _rev1 = array.get(_revArr, _i) * 10
+    float _rev2 = array.get(_revArr, _i + 1) * 10
+    float _om1  = _rev1 == 0 ? na : _oi1 / _rev1 * 100
+    float _om2  = _rev2 == 0 ? na : _oi2 / _rev2 * 100
+    float _dif  = na(_om1) or na(_om2) ? na : math.round(_om1 - _om2, 1)
+    string _sym = na(_dif) ? "" : _dif > 0 ? "+" + str.tostring(_dif) + "pp" : str.tostring(_dif) + "pp"
+    color  _clr = na(_dif) ? _frameCol : _dif > 0 ? _upClr : _dif < 0 ? _dnClr : _flatClr
+    string _txt = na(_dif) ? "●" : i_miniMode ? "●" : _sym
+    table.cell(_t, _col, _row, _txt, text_halign=text.align_right, text_color=_clr, text_size=i_tblSize)
+
+var table _finTbl = table.new(i_tblPosY + "_" + i_tblPosX, columns=7, rows=i_dataSize + 2,
      bgcolor=_bgClr, frame_color=_frameCol, frame_width=1, border_color=_frameCol, border_width=1)
 
 if barstate.islast
     if not i_miniMode
         _ftHead(_finTbl, 0, 0, "Quarter")
         _ftHead(_finTbl, 1, 0, "EPS")
-        _ftHead(_finTbl, 2, 0, i_finPer == "FY" ? "YoY" : "EPS %Chg")
-        _ftHead(_finTbl, 3, 0, i_finPer == "FY" ? "Sales YoY" : "Sales %Chg")
-        _ftHead(_finTbl, 4, 0, "NI %Chg")
-        _ftHead(_finTbl, 5, 0, "OI %Chg")
+        _ftHead(_finTbl, 2, 0, i_finPer == "FY" ? "YoY" : "%EPS")
+        _ftHead(_finTbl, 3, 0, i_finPer == "FY" ? "Sales YoY" : "%Sales")
+        _ftHead(_finTbl, 4, 0, "%NI")
+        _ftHead(_finTbl, 5, 0, "%OI")
+        _ftHead(_finTbl, 6, 0, "%OM")
 
         for i = 0 to i_dataSize - 5
             _ftDate(_finTbl, 0, i+1, str.format("{0, date, MMM-yy}", array.get(_dates, i)))
@@ -302,6 +362,7 @@ if barstate.islast
             _ftYoY(_finTbl, 3, i+1, _revArr, i, i_finPer == "FY" ? 1 : 4)
             _ftYoY(_finTbl, 4, i+1, _niArr,  i, 1)
             _ftYoY(_finTbl, 5, i+1, _oiArr,  i, 1)
+            _ftOmQoQ(_finTbl, 6, i+1, _oiArr, _revArr, i)
     else
         for i = 0 to i_dataSize - 5
             _ftDate(_finTbl, 0, i+1, str.format("{0, date, MMM-yy}", array.get(_dates, i)))
@@ -309,6 +370,7 @@ if barstate.islast
             _ftYoY(_finTbl, 3, i+1, _revArr, i, i_finPer == "FY" ? 1 : 4)
             _ftYoY(_finTbl, 4, i+1, _niArr,  i, 1)
             _ftYoY(_finTbl, 5, i+1, _oiArr,  i, 1)
+            _ftOmQoQ(_finTbl, 6, i+1, _oiArr, _revArr, i)
 
     string _mcFmt = na(_mc) or nz(_mc) == 0 ? "N/A" : "₹" + str.tostring(math.round(_mc, 0), "#,###") + " Cr"
     int    _mcRow = i_dataSize - 3
@@ -345,12 +407,12 @@ if i_showRS and onSetupOrLast and rsScore >= i_rsThresh
     label.new(x=bar_index, y=low * (1.0 - i_rsGap * 3.5),
          text=_rsVert,
          style=label.style_none,
-         textcolor=color.new(color.gray, 10),
+         textcolor=i_darkMode ? color.new(color.silver, 20) : color.new(color.gray, 40),
          size=size.large,
          text_font_family=font.family_monospace)
 
 // RS Blue Dot — sky blue circle, on setup candles / current bar when conditions are met
-color _rsBlue = color.rgb(0, 191, 255)
+color _rsBlue = color.rgb(0, 191, 255, 50)
 if i_showRS and rsBlueDotCond and onSetupOrLast
     label.new(x=bar_index, y=_rsDotY,
          text="", style=label.style_circle,
@@ -362,9 +424,18 @@ plot(i_show50  ? ema50  : na, "50 EMA",  i_ema50Clr,  linewidth=1)
 plot(i_show200 ? ema200 : na, "200 EMA", i_ema200Clr, linewidth=1)
 plot(i_showAvwap and timeframe.isdaily ? anchoredVWAP : na, "Anchored VWAP", i_avwapColor, linewidth=2)
 
-color _rsClr = isOut ? color.new(color.green, 0) : color.new(color.red, 0)
-plotshape(i_showRS, "RS Line", shape.square, location.top, _rsClr, size=size.small)
+color _rsClr = isOut ? color.new(color.green, 50) : color.new(color.red, 70)
+plotshape(i_showRS     ? true : bool(na), "RS Line",            shape.square, location.top, _rsClr,    size=size.small)
+plotshape(i_showPressure and not na(_pressure) ? true : bool(na), "Minervini Pressure", shape.square, location.bottom, _pressColor, size=size.small)
 
 // Paint candles black only within the configured lookback window.
 bool inWindow = bar_index >= last_bar_index - i_lookback
 barcolor(i_colorSetup and setupActive and inWindow ? i_setupColor : na)
+
+// Circle behind each of the last 3 candles when tight zone detected.
+color _tightClrActual = i_darkMode ? color.new(#3f424b, 75) : i_tightColor
+bool inTightWindow = bar_index >= last_bar_index - i_tightLookback
+if i_showTight and tightZone and inTightWindow
+    label.new(x=bar_index,     y=(high     + low    ) / 2, text="", style=label.style_circle, color=_tightClrActual, size=size.huge)
+    label.new(x=bar_index - 1, y=(high[1]  + low[1] ) / 2, text="", style=label.style_circle, color=_tightClrActual, size=size.huge)
+    label.new(x=bar_index - 2, y=(high[2]  + low[2] ) / 2, text="", style=label.style_circle, color=_tightClrActual, size=size.huge)

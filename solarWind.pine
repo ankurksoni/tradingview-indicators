@@ -1,0 +1,58 @@
+//@version=6
+
+// =============================================================================
+// SOLAR WINDS — What does this indicator do? (Plain English)
+// =============================================================================
+// Think of this indicator as a "momentum tide meter" that swings between
+// positive and negative territory (like a wave).
+//
+// HOW IT WORKS:
+//   1. It looks back over a chosen period (default 35 bars) and asks:
+//      "Where does the current bar's midpoint (high+low)/2 sit within
+//       the recent high-low range?" — 0 = at the bottom, 1 = at the top.
+//   2. That position is smoothed twice (like a double-smoothed stochastic)
+//      and then pushed through a "Fisher Transform" — a mathematical trick
+//      that sharpens peaks and troughs so turning points pop out clearly.
+//   3. The result oscillates mostly between -1.5 and +1.5.
+//
+// READING THE SIGNALS:
+//   • Histogram GREEN  → momentum is positive (price trending up)
+//   • Histogram RED    → momentum is negative (price trending down)
+//   • Bar turns YELLOW → momentum just crossed zero:
+//       Yellow crossing UP   → potential bullish shift (buy signal)
+//       Yellow crossing DOWN → potential bearish shift (sell signal)
+//
+// IN SHORT: Use the yellow crossings as early alerts that a trend may be
+// changing direction, then confirm with price action before acting.
+// =============================================================================
+
+indicator("Solar Winds", overlay = false)
+
+period = input.int(35, title = "Period", minval = 1)
+
+solar(per) =>
+    highval = ta.highest(high, per)
+    lowval  = ta.lowest(low, per)
+    price   = (high + low) / 2
+    var float val1 = 0.0
+    val1 := 0.66 * ((price - lowval) / (highval - lowval) - 0.5) + 0.67 * nz(val1[1])
+    val2 = val1 > 0.99 ? 0.999 : val1 < -0.99 ? -0.999 : val1
+    var float sol = 0.0
+    sol := 0.5 * math.log((1 + val2) / math.max(1 - val2, 0.001)) + 0.5 * nz(sol[1])
+    sol
+
+solar_buff = solar(period)
+
+level = 0.0
+signal_up   = nz(solar_buff[1]) < level and solar_buff > level
+signal_down = nz(solar_buff[1]) > level and solar_buff < level
+
+color_hist = signal_up or signal_down ? color.yellow
+           : solar_buff > level       ? color.green
+           :                            color.red
+
+alertcondition(signal_up,   title = "Solar Cross Up",   message = "{{ticker}}, Signal UP")
+alertcondition(signal_down, title = "Solar Cross Down", message = "{{ticker}}, Signal DOWN")
+
+plot(solar_buff, style = plot.style_histogram, color = color_hist, linewidth = 4)
+plot(solar_buff, style = plot.style_line,      color = color_hist, linewidth = 2)
