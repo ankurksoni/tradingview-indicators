@@ -1,8 +1,5 @@
-// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
-// Financials table based on work by finallynitin, EquityCraze & Mohit_Kakkar08
-
 //@version=6
-indicator("Setup Scanner – CVD Bull Divergence", shorttitle="Setup", overlay=true, max_bars_back=500, max_labels_count=500)
+indicator("VCP Setup", shorttitle="VCP-Setup", overlay=true, max_bars_back=500, max_labels_count=500)
 
 import PineCoders/lower_tf/2 as PCltf
 
