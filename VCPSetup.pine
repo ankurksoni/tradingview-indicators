@@ -339,48 +339,71 @@ _ftOmQoQ(_t, _col, _row, _oiArr, _revArr, _i) =>
     string _txt = na(_dif) ? "●" : i_miniMode ? "●" : _sym
     table.cell(_t, _col, _row, _txt, text_halign=text.align_right, text_color=_clr, text_size=i_tblSize)
 
-var table _finTbl = table.new(i_tblPosY + "_" + i_tblPosX, columns=7, rows=i_dataSize + 2,
+// Valuation metrics table (positioned at top-right)
+var table _valTbl = table.new("top_right", columns=2, rows=4,
+     bgcolor=_bgClr, frame_color=_frameCol, frame_width=1, border_color=_frameCol, border_width=1)
+
+// Quarterly financials table
+int _colCount = i_dataSize - 4
+var table _finTbl = table.new(i_tblPosY + "_" + i_tblPosX, columns=_colCount + 1, rows=7,
      bgcolor=_bgClr, frame_color=_frameCol, frame_width=1, border_color=_frameCol, border_width=1)
 
 if barstate.islast
-    if not i_miniMode
-        _ftHead(_finTbl, 0, 0, "Quarter")
-        _ftHead(_finTbl, 1, 0, "EPS")
-        _ftHead(_finTbl, 2, 0, i_finPer == "FY" ? "YoY" : "%EPS")
-        _ftHead(_finTbl, 3, 0, i_finPer == "FY" ? "Sales YoY" : "%Sales")
-        _ftHead(_finTbl, 4, 0, "%NI")
-        _ftHead(_finTbl, 5, 0, "%OI")
-        _ftHead(_finTbl, 6, 0, "%OM")
-
-        for i = 0 to i_dataSize - 5
-            _ftDate(_finTbl, 0, i+1, str.format("{0, date, MMM-yy}", array.get(_dates, i)))
-            _ftVal(true,  _finTbl, 1, i+1, _epsArr, i)
-            _ftYoY(_finTbl, 2, i+1, _epsArr, i, i_finPer == "FY" ? 1 : 4)
-            _ftYoY(_finTbl, 3, i+1, _revArr, i, i_finPer == "FY" ? 1 : 4)
-            _ftYoY(_finTbl, 4, i+1, _niArr,  i, 1)
-            _ftYoY(_finTbl, 5, i+1, _oiArr,  i, 1)
-            _ftOmQoQ(_finTbl, 6, i+1, _oiArr, _revArr, i)
-    else
-        for i = 0 to i_dataSize - 5
-            _ftDate(_finTbl, 0, i+1, str.format("{0, date, MMM-yy}", array.get(_dates, i)))
-            _ftYoY(_finTbl, 2, i+1, _epsArr, i, i_finPer == "FY" ? 1 : 4)
-            _ftYoY(_finTbl, 3, i+1, _revArr, i, i_finPer == "FY" ? 1 : 4)
-            _ftYoY(_finTbl, 4, i+1, _niArr,  i, 1)
-            _ftYoY(_finTbl, 5, i+1, _oiArr,  i, 1)
-            _ftOmQoQ(_finTbl, 6, i+1, _oiArr, _revArr, i)
-
+    // ─── Valuation Metrics Table ───
     string _mcFmt = na(_mc) or nz(_mc) == 0 ? "N/A" : "₹" + str.tostring(math.round(_mc, 0), "#,###") + " Cr"
-    int    _mcRow = i_dataSize - 3
     string _pegFmt = na(_peg) ? "N/A" : str.tostring(math.round(_peg, 2))
     string _pbFmt  = na(_pb)  ? "N/A" : str.tostring(math.round(_pb, 2)) + "x"
 
-    // Mkt Cap | value | PEG | value | P/B | value — single row
-    table.cell(_finTbl, 0, _mcRow, "Mkt Cap", bgcolor=_hdClr, text_color=_textClr, text_size=i_tblSize)
-    table.cell(_finTbl, 1, _mcRow, _mcFmt,    bgcolor=_bgClr, text_color=_textClr, text_size=i_tblSize)
-    table.cell(_finTbl, 2, _mcRow, "PEG",     bgcolor=_hdClr, text_color=_textClr, text_size=i_tblSize)
-    table.cell(_finTbl, 3, _mcRow, _pegFmt,   bgcolor=_bgClr, text_color=_textClr, text_size=i_tblSize)
-    table.cell(_finTbl, 4, _mcRow, "P/B",     bgcolor=_hdClr, text_color=_textClr, text_size=i_tblSize)
-    table.cell(_finTbl, 5, _mcRow, _pbFmt,    bgcolor=_bgClr, text_color=_textClr, text_size=i_tblSize)
+    _ftHead(_valTbl, 0, 0, "Metric")
+    _ftHead(_valTbl, 1, 0, "Value")
+
+    _ftHead(_valTbl, 0, 1, "Mkt Cap")
+    table.cell(_valTbl, 1, 1, _mcFmt, bgcolor=_bgClr, text_color=_textClr, text_size=i_tblSize)
+
+    _ftHead(_valTbl, 0, 2, "PEG")
+    table.cell(_valTbl, 1, 2, _pegFmt, bgcolor=_bgClr, text_color=_textClr, text_size=i_tblSize)
+
+    _ftHead(_valTbl, 0, 3, "P/B")
+    table.cell(_valTbl, 1, 3, _pbFmt, bgcolor=_bgClr, text_color=_textClr, text_size=i_tblSize)
+
+    // ─── Quarterly Financials Table ───
+    // Row 0: Quarter dates header
+    _ftHead(_finTbl, 0, 0, "Qtr")
+    for col = 0 to _colCount - 1
+        string _dateStr = str.format("{0, date, MMM-yy}", array.get(_dates, col))
+        _ftDate(_finTbl, col + 1, 0, _dateStr)
+
+    // Row 1: EPS
+    _ftHead(_finTbl, 0, 1, "EPS")
+    for col = 0 to _colCount - 1
+        _ftVal(true, _finTbl, col + 1, 1, _epsArr, col)
+
+    // Row 2: %EPS or YoY
+    string _epsLbl = i_finPer == "FY" ? "YoY" : "%EPS"
+    _ftHead(_finTbl, 0, 2, _epsLbl)
+    for col = 0 to _colCount - 1
+        _ftYoY(_finTbl, col + 1, 2, _epsArr, col, i_finPer == "FY" ? 1 : 4)
+
+    // Row 3: %Sales or Sales YoY
+    string _salesLbl = i_finPer == "FY" ? "Sales YoY" : "%Sls"
+    _ftHead(_finTbl, 0, 3, _salesLbl)
+    for col = 0 to _colCount - 1
+        _ftYoY(_finTbl, col + 1, 3, _revArr, col, i_finPer == "FY" ? 1 : 4)
+
+    // Row 4: %NI
+    _ftHead(_finTbl, 0, 4, "%NI")
+    for col = 0 to _colCount - 1
+        _ftYoY(_finTbl, col + 1, 4, _niArr, col, 1)
+
+    // Row 5: %OI
+    _ftHead(_finTbl, 0, 5, "%OI")
+    for col = 0 to _colCount - 1
+        _ftYoY(_finTbl, col + 1, 5, _oiArr, col, 1)
+
+    // Row 6: %OM
+    _ftHead(_finTbl, 0, 6, "%OM")
+    for col = 0 to _colCount - 1
+        _ftOmQoQ(_finTbl, col + 1, 6, _oiArr, _revArr, col)
 
 // ═══════════════════════════════════════════════════════════════
 //  VISUALS
