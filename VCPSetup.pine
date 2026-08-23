@@ -16,6 +16,14 @@ string LTF7 = "~50 intrabars per chart bar"
 string LTF8 = "~100 intrabars per chart bar"
 
 // ═══════════════════════════════════════════════════════════════
+//  LISTING YEAR — detect from first bar
+// ═══════════════════════════════════════════════════════════════
+var int firstYear = na
+
+if na(firstYear)
+    firstYear := year(time)
+
+// ═══════════════════════════════════════════════════════════════
 //  INPUTS
 // ═══════════════════════════════════════════════════════════════
 
@@ -47,6 +55,8 @@ int   i_rsThresh   = input.int(80, "Show RS score only when ≥", minval=1, maxv
      tooltip="RS score (0–100 percentile rank vs its own 52-week history) is only displayed when it meets or exceeds this value.")
 
 bool  i_showTight      = input.bool(true,  "Highlight tight 3-bar zone",          group=G_VIS)
+string i_tightStyle    = input.string("Line above chart", "Tight zone display style", options=["Circle", "Line above chart"], group=G_VIS,
+     tooltip="Circle = gray circles behind candles. Line above chart = colored marker above the bar (like the RS line), so it doesn't interfere with candle reading.")
 int   i_tightLookback  = input.int(10, "Tight zone lookback bars", minval=1, maxval=50, group=G_VIS,
      tooltip="Scan this many prior bars to find one whose high AND low are both within the tolerance % of the current candle's midpoint.")
 float i_tightPct       = input.float(1.5, "Tight zone tolerance % from median", minval=0.1, maxval=20.0, step=0.1, group=G_VIS,
@@ -70,6 +80,12 @@ color i_ema200Clr = input.color(color.new(color.red, 5),             "",        
 bool  i_showRS   = input.bool(true,                      "Show RS line",   inline="rs",  group=G_EMA)
 string i_idxSym  = input.symbol("NSE:NIFTYSMLCAP250",   "vs",             inline="rs",  group=G_EMA)
 int   i_rsPeriod = input.int(20, "RS Period", minval=5, maxval=200,        inline="rs",  group=G_EMA)
+int   i_emaSupportLookback = input.int(252, "EMA Support Lookback Bars", minval=10, maxval=2000, group=G_EMA)
+
+string G_HLC = "HLC Bar Chart"
+bool  i_showHlc     = input.bool(true,       "Show HLC Bar Chart",  group=G_HLC, tooltip="Overlay HLC bars (open=close) colored by close vs prior close, replacing the look of regular candles.")
+color i_hlcBullClr  = input.color(#0097A7,    "Bullish Color",       group=G_HLC)
+color i_hlcBearClr  = input.color(#EC407A,    "Bearish Color",       group=G_HLC)
 
 string G_PRESS = "Minervini Pressure"
 bool  i_showPressure  = input.bool(true,  "Show pressure line at bottom of chart", group=G_PRESS)
@@ -78,6 +94,8 @@ bool  i_pressWeighted = input.bool(false, "Body/range weighted",                
      tooltip="Off = classic up-volume vs down-volume. On = volume weighted by candle body/range ratio.")
 
 string G_FIN = "════ Quarterly Financials ════"
+bool   i_showValTbl = input.bool(true,    "Show Valuation table",     group=G_FIN)
+bool   i_showFinTbl = input.bool(true,    "Show Financials table",    group=G_FIN)
 bool   i_miniMode  = input.bool(false,    "Mini Mode",          group=G_FIN, tooltip="Show traffic-light dots instead of values.")
 int    i_dataSize  = input.int(4,         "Quarters to show",   group=G_FIN, minval=1, maxval=12) + 5
 string i_tblSize   = input.string("small","Table Size",         group=G_FIN, options=["tiny","small","normal","large","huge","auto"], inline="tbl")
@@ -97,14 +115,18 @@ upDnIntrabarVolumes() =>
     float prevClose = nz(close[1])
     float prevUp    = nz(upVol[1])
     float prevDn    = nz(dnVol[1])
-    switch
-        close > open    => upVol += volume
-        close < open    => dnVol -= volume
-        close > prevClose => upVol += volume
-        close < prevClose => dnVol -= volume
-        prevUp > 0      => upVol += volume
-        prevDn < 0      => dnVol -= volume
-        =>              na  // default: no volume assignment
+    if close > open
+        upVol += volume
+    else if close < open
+        dnVol -= volume
+    else if close > prevClose
+        upVol += volume
+    else if close < prevClose
+        dnVol -= volume
+    else if prevUp > 0
+        upVol += volume
+    else if prevDn < 0
+        dnVol -= volume
     [upVol, dnVol]
 
 var string ltfString = PCltf.ltf(i_ltfMode, LTF1, LTF2, LTF3, LTF4, LTF5, LTF6, LTF7, LTF8)
@@ -128,6 +150,13 @@ float ema10  = ta.ema(close, 10)
 float ema20  = ta.ema(close, 20)
 float ema50  = ta.ema(close, 50)
 float ema200 = ta.ema(close, 200)
+
+// Support touch: candle low dipped below the EMA but closed back above it
+bool ema10SupportTouch  = low < ema10  and close > ema10
+bool ema20SupportTouch  = low < ema20  and close > ema20
+
+int ema10SupportCount = int(math.sum(ema10SupportTouch ? 1.0 : 0.0, i_emaSupportLookback))
+int ema20SupportCount = int(math.sum(ema20SupportTouch ? 1.0 : 0.0, i_emaSupportLookback))
 
 // ═══════════════════════════════════════════════════════════════
 //  ANCHORED VWAP
@@ -340,74 +369,105 @@ _ftOmQoQ(_t, _col, _row, _oiArr, _revArr, _i) =>
     table.cell(_t, _col, _row, _txt, text_halign=text.align_right, text_color=_clr, text_size=i_tblSize)
 
 // Valuation metrics table (positioned at top-right)
-var table _valTbl = table.new("top_right", columns=2, rows=4,
+var table _valTbl = table.new("top_right", columns=2, rows=8,
      bgcolor=_bgClr, frame_color=_frameCol, frame_width=1, border_color=_frameCol, border_width=1)
 
 // Quarterly financials table
 int _colCount = i_dataSize - 4
-var table _finTbl = table.new(i_tblPosY + "_" + i_tblPosX, columns=_colCount + 1, rows=7,
+var table _finTbl = table.new(i_tblPosY + "_" + i_tblPosX, columns=_colCount + 1, rows=9,
      bgcolor=_bgClr, frame_color=_frameCol, frame_width=1, border_color=_frameCol, border_width=1)
 
 if barstate.islast
     // ─── Valuation Metrics Table ───
-    string _mcFmt = na(_mc) or nz(_mc) == 0 ? "N/A" : "₹" + str.tostring(math.round(_mc, 0), "#,###") + " Cr"
-    string _pegFmt = na(_peg) ? "N/A" : str.tostring(math.round(_peg, 2))
-    string _pbFmt  = na(_pb)  ? "N/A" : str.tostring(math.round(_pb, 2)) + "x"
+    if i_showValTbl
+        string _mcFmt = na(_mc) or nz(_mc) == 0 ? "N/A" : "₹" + str.tostring(math.round(_mc, 0), "#,###") + " Cr"
+        string _pegFmt = na(_peg) ? "N/A" : str.tostring(math.round(_peg, 2))
+        string _pbFmt  = na(_pb)  ? "N/A" : str.tostring(math.round(_pb, 2)) + "x"
 
-    _ftHead(_valTbl, 0, 0, "Metric")
-    _ftHead(_valTbl, 1, 0, "Value")
+        _ftHead(_valTbl, 0, 0, "Metric")
+        _ftHead(_valTbl, 1, 0, "Value")
 
-    _ftHead(_valTbl, 0, 1, "Mkt Cap")
-    table.cell(_valTbl, 1, 1, _mcFmt, bgcolor=_bgClr, text_color=_textClr, text_size=i_tblSize)
+        _ftHead(_valTbl, 0, 1, "Mkt Cap")
+        table.cell(_valTbl, 1, 1, _mcFmt, bgcolor=_bgClr, text_color=_textClr, text_size=i_tblSize)
 
-    _ftHead(_valTbl, 0, 2, "PEG")
-    table.cell(_valTbl, 1, 2, _pegFmt, bgcolor=_bgClr, text_color=_textClr, text_size=i_tblSize)
+        _ftHead(_valTbl, 0, 2, "PEG")
+        table.cell(_valTbl, 1, 2, _pegFmt, bgcolor=_bgClr, text_color=_textClr, text_size=i_tblSize)
 
-    _ftHead(_valTbl, 0, 3, "P/B")
-    table.cell(_valTbl, 1, 3, _pbFmt, bgcolor=_bgClr, text_color=_textClr, text_size=i_tblSize)
+        _ftHead(_valTbl, 0, 3, "P/B")
+        table.cell(_valTbl, 1, 3, _pbFmt, bgcolor=_bgClr, text_color=_textClr, text_size=i_tblSize)
+
+        _ftHead(_valTbl, 0, 4, "Listed")
+        string _listFmt = na(firstYear) ? "N/A" : str.tostring(firstYear)
+        table.cell(_valTbl, 1, 4, _listFmt, bgcolor=_bgClr, text_color=_textClr, text_size=i_tblSize)
+
+        _ftHead(_valTbl, 0, 5, "Sector")
+        string _sectorVal = na(syminfo.sector) ? "N/A" : syminfo.sector
+        table.cell(_valTbl, 1, 5, _sectorVal, bgcolor=_bgClr, text_color=_textClr, text_size=i_tblSize)
+
+        _ftHead(_valTbl, 0, 6, "Industry")
+        string _industryVal = na(syminfo.industry) ? "N/A" : syminfo.industry
+        table.cell(_valTbl, 1, 6, _industryVal, bgcolor=_bgClr, text_color=_textClr, text_size=i_tblSize)
+
+        _ftHead(_valTbl, 0, 7, "10:20 EMA")
+        string _ema1020Fmt = ema20SupportCount == 0 ? "N/A" : str.tostring(math.round(ema10SupportCount / ema20SupportCount * 100)) + "%"
+        table.cell(_valTbl, 1, 7, _ema1020Fmt, bgcolor=_bgClr, text_color=_textClr, text_size=i_tblSize)
 
     // ─── Quarterly Financials Table ───
-    // Row 0: Quarter dates header
-    _ftHead(_finTbl, 0, 0, "Qtr")
-    for col = 0 to _colCount - 1
-        string _dateStr = str.format("{0, date, MMM-yy}", array.get(_dates, col))
-        _ftDate(_finTbl, col + 1, 0, _dateStr)
+    if i_showFinTbl
+        // Row 2: Quarter dates header
+        _ftHead(_finTbl, 0, 2, "Qtr")
+        for col = 0 to _colCount - 1
+            string _dateStr = str.format("{0, date, MMM-yy}", array.get(_dates, col))
+            _ftDate(_finTbl, col + 1, 2, _dateStr)
 
-    // Row 1: EPS
-    _ftHead(_finTbl, 0, 1, "EPS")
-    for col = 0 to _colCount - 1
-        _ftVal(true, _finTbl, col + 1, 1, _epsArr, col)
+        // Row 3: EPS
+        _ftHead(_finTbl, 0, 3, "EPS")
+        for col = 0 to _colCount - 1
+            _ftVal(true, _finTbl, col + 1, 3, _epsArr, col)
 
-    // Row 2: %EPS or YoY
-    string _epsLbl = i_finPer == "FY" ? "YoY" : "%EPS"
-    _ftHead(_finTbl, 0, 2, _epsLbl)
-    for col = 0 to _colCount - 1
-        _ftYoY(_finTbl, col + 1, 2, _epsArr, col, i_finPer == "FY" ? 1 : 4)
+        // Row 4: %EPS or YoY
+        string _epsLbl = i_finPer == "FY" ? "YoY" : "%EPS"
+        _ftHead(_finTbl, 0, 4, _epsLbl)
+        for col = 0 to _colCount - 1
+            _ftYoY(_finTbl, col + 1, 4, _epsArr, col, i_finPer == "FY" ? 1 : 4)
 
-    // Row 3: %Sales or Sales YoY
-    string _salesLbl = i_finPer == "FY" ? "Sales YoY" : "%Sls"
-    _ftHead(_finTbl, 0, 3, _salesLbl)
-    for col = 0 to _colCount - 1
-        _ftYoY(_finTbl, col + 1, 3, _revArr, col, i_finPer == "FY" ? 1 : 4)
+        // Row 5: %Sales or Sales YoY
+        string _salesLbl = i_finPer == "FY" ? "Sales YoY" : "%Sls"
+        _ftHead(_finTbl, 0, 5, _salesLbl)
+        for col = 0 to _colCount - 1
+            _ftYoY(_finTbl, col + 1, 5, _revArr, col, i_finPer == "FY" ? 1 : 4)
 
-    // Row 4: %NI
-    _ftHead(_finTbl, 0, 4, "%NI")
-    for col = 0 to _colCount - 1
-        _ftYoY(_finTbl, col + 1, 4, _niArr, col, 1)
+        // Row 6: %NI
+        _ftHead(_finTbl, 0, 6, "%NI")
+        for col = 0 to _colCount - 1
+            _ftYoY(_finTbl, col + 1, 6, _niArr, col, 1)
 
-    // Row 5: %OI
-    _ftHead(_finTbl, 0, 5, "%OI")
-    for col = 0 to _colCount - 1
-        _ftYoY(_finTbl, col + 1, 5, _oiArr, col, 1)
+        // Row 7: %OI
+        _ftHead(_finTbl, 0, 7, "%OI")
+        for col = 0 to _colCount - 1
+            _ftYoY(_finTbl, col + 1, 7, _oiArr, col, 1)
 
-    // Row 6: %OM
-    _ftHead(_finTbl, 0, 6, "%OM")
-    for col = 0 to _colCount - 1
-        _ftOmQoQ(_finTbl, col + 1, 6, _oiArr, _revArr, col)
+        // Row 8: %OM
+        _ftHead(_finTbl, 0, 8, "%OM")
+        for col = 0 to _colCount - 1
+            _ftOmQoQ(_finTbl, col + 1, 8, _oiArr, _revArr, col)
 
 // ═══════════════════════════════════════════════════════════════
 //  VISUALS
 // ═══════════════════════════════════════════════════════════════
+
+// HLC Bar Chart — open plotted at close so bars render as HLC (not OHLC) candles.
+color _hlcColor = close >= close[1] ? i_hlcBullClr : i_hlcBearClr
+plotcandle(
+     i_showHlc ? close : na,
+     i_showHlc ? high  : na,
+     i_showHlc ? low   : na,
+     i_showHlc ? close : na,
+     title="HLC Bars",
+     color=_hlcColor,
+     wickcolor=_hlcColor,
+     bordercolor=_hlcColor
+)
 
 if bullishCvdDiv
     label.new(x=bar_index, y=low*(1.0-i_arrowGap), text="", style=label.style_circle, color=i_divDot, size=size.tiny)
@@ -452,10 +512,14 @@ plotshape(i_showPressure and not na(_pressure) ? true : bool(na), "Minervini Pre
 bool inWindow = bar_index >= last_bar_index - i_lookback
 barcolor(i_colorSetup and setupActive and inWindow ? i_setupColor : na)
 
-// Circle behind each of the last 3 candles when tight zone detected.
-color _tightClrActual = i_darkMode ? color.new(#3f424b, 75) : i_tightColor
+// Tight zone marker: either a circle behind each of the last 3 candles, or a line above the chart.
+color _color _tightClrActual = i_darkMode ? color.new(#05f409, 0) : i_tightColor
 bool inTightWindow = bar_index >= last_bar_index - i_tightLookback
-if i_showTight and tightZone and inTightWindow
+bool _tightAsCircle = i_tightStyle == "Circle"
+if i_showTight and _tightAsCircle and tightZone and inTightWindow
     label.new(x=bar_index,     y=(high     + low    ) / 2, text="", style=label.style_circle, color=_tightClrActual, size=size.huge)
     label.new(x=bar_index - 1, y=(high[1]  + low[1] ) / 2, text="", style=label.style_circle, color=_tightClrActual, size=size.huge)
     label.new(x=bar_index - 2, y=(high[2]  + low[2] ) / 2, text="", style=label.style_circle, color=_tightClrActual, size=size.huge)
+
+plotshape(i_showTight and not _tightAsCircle and tightZone and inTightWindow ? true : bool(na),
+     "Tight Zone Line", shape.flag, location.top, _tightClrActual, size=size.small)

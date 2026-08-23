@@ -1,0 +1,23 @@
+//@version=6
+indicator("HLC Bar Chart", overlay=true)
+
+// Color settings
+bullColor = input.color(#0097A7, "Bullish Color")
+bearColor = input.color(#EC407A, "Bearish Color")
+
+// HLC
+hlcOpen  = close
+hlcHigh  = high
+hlcLow   = low
+hlcClose = close
+
+// Plot HLC candles
+plotcandle(
+     hlcOpen,
+     hlcHigh,
+     hlcLow,
+     hlcClose,
+     color = close >= close[1] ? bullColor : bearColor,
+     wickcolor = close >= close[1] ? bullColor : bearColor,
+     bordercolor = close >= close[1] ? bullColor : bearColor
+)
