@@ -1,0 +1,78 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © ankursoni
+
+// PE Ratio & TTM EPS — Screener.in style chart
+// - PE ratio (TTM) plotted as a line, meant to be read off the RIGHT price scale
+// - TTM EPS plotted as full-quarter blocks (columns), meant to be read off the LEFT price scale
+// - A flat dashed line marks the median PE over all pulled history
+// - Each reported quarter is shown as a shaded block spanning the whole quarter,
+//   alternating shaded/unshaded so consecutive quarters are visually distinguishable
+//
+// NOTE: Pine Script cannot assign a plot to the left/right scale from code.
+// After adding this indicator, right-click the "TTM EPS" plot in the pane's
+// data window / legend -> "Scale" -> "Left" so it renders on the left axis,
+// exactly like the reference screener.in chart.
+
+//@version=6
+indicator('PE Ratio & TTM EPS (Screener Style)', shorttitle = 'PE/EPS', overlay = false, format = format.price, precision = 2, max_labels_count = 100)
+
+string GRP1 = "════════ Data ═════════"
+epsSource = input.string('Diluted', 'TTM EPS Source', options = ['Diluted', 'Basic'], group = GRP1, tooltip = 'Which EPS figure to use for the TTM EPS blocks')
+usePriceFallback = input.bool(true, 'Fallback to Close/EPS if PE field unavailable', group = GRP1, tooltip = 'Some symbols do not publish a PE_RATIO field. If enabled, PE is computed as Close / TTM EPS when the field is missing')
+
+string GRP2 = "════════ Style ═════════"
+peColor = input.color(#5b6fed, 'PE Line Color', group = GRP2)
+peWidth = input.int(2, 'PE Line Width', minval = 1, maxval = 4, group = GRP2)
+epsBlockColor = input.color(#7ec8e3, 'TTM EPS Block Color', group = GRP2)
+epsBlockTransp = input.int(75, 'TTM EPS Block Transparency', minval = 0, maxval = 95, group = GRP2)
+medianColor = input.color(color.gray, 'Median PE Line Color', group = GRP2)
+showShadeAlternating = input.bool(true, 'Alternate Shading Per Quarter', group = GRP2, tooltip = 'When on, only every other reported quarter is shaded, matching the screener.in look. Turn off to shade every quarter')
+
+// ───────────────────────── Financial data ─────────────────────────
+
+epsFinId = epsSource == 'Diluted' ? 'EARNINGS_PER_SHARE_DILUTED' : 'EARNINGS_PER_SHARE_BASIC'
+
+epsTTM = request.financial(syminfo.tickerid, epsFinId, 'TTM', barmerge.gaps_off, ignore_invalid_symbol = true)
+peField = request.financial(syminfo.tickerid, 'PRICE_EARNINGS_RATIO', 'TTM', barmerge.gaps_off, ignore_invalid_symbol = true)
+
+// Fallback PE uses the weekly close, independent of the chart's own timeframe
+weeklyClose = request.security(syminfo.tickerid, 'W', close, lookahead = barmerge.lookahead_off)
+
+peComputed = epsTTM > 0 ? weeklyClose / epsTTM : na
+pe = na(peField) and usePriceFallback ? peComputed : peField
+
+// ───────────────────────── Quarter block detection ─────────────────────────
+
+newQuarter = not na(epsTTM) and (na(epsTTM[1]) or epsTTM != epsTTM[1])
+
+var bool shadeOn = false
+if newQuarter
+    shadeOn := not shadeOn
+
+epsDisplay = (not showShadeAlternating or shadeOn) and not na(epsTTM) ? epsTTM : na
+
+// ───────────────────────── Median PE (all pulled history) ─────────────────────────
+
+var peHistory = array.new_float(0)
+if not na(pe)
+    array.push(peHistory, pe)
+    if array.size(peHistory) > 100000
+        array.shift(peHistory)
+
+var int firstBarTime = na
+if barstate.isfirst
+    firstBarTime := time
+
+var line medianLine = na
+var label medianLabel = na
+if barstate.islast and array.size(peHistory) > 0
+    medianPE = array.median(peHistory)
+    line.delete(medianLine)
+    label.delete(medianLabel)
+    medianLine := line.new(x1 = firstBarTime, y1 = medianPE, x2 = time, y2 = medianPE, xloc = xloc.bar_time, extend = extend.none, color = medianColor, style = line.style_dashed, width = 1)
+    medianLabel := label.new(x = time, y = medianPE, xloc = xloc.bar_time, text = 'Median PE = ' + str.tostring(medianPE, '#.##'), style = label.style_label_left, color = color.new(color.gray, 100), textcolor = medianColor, size = size.small)
+
+// ───────────────────────── Plots ─────────────────────────
+
+plot(epsDisplay, title = 'TTM EPS (Quarter Blocks)', style = plot.style_columns, color = color.new(epsBlockColor, epsBlockTransp))
+plot(pe, title = 'PE', color = peColor, linewidth = peWidth)

@@ -513,7 +513,7 @@ bool inWindow = bar_index >= last_bar_index - i_lookback
 barcolor(i_colorSetup and setupActive and inWindow ? i_setupColor : na)
 
 // Tight zone marker: either a circle behind each of the last 3 candles, or a line above the chart.
-color _color _tightClrActual = i_darkMode ? color.new(#05f409, 0) : i_tightColor
+color _tightClrActual = i_darkMode ? color.new(#05f409, 0) : i_tightColor
 bool inTightWindow = bar_index >= last_bar_index - i_tightLookback
 bool _tightAsCircle = i_tightStyle == "Circle"
 if i_showTight and _tightAsCircle and tightZone and inTightWindow

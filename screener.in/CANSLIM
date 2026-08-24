@@ -1,0 +1,15 @@
+EPS latest quarter > EPS preceding quarter AND
+EPS latest quarter > EPS preceding year quarter AND
+EPS last year > EPS preceding year AND
+Expected quarterly EPS  > EPS latest quarter  AND 
+(EPS growth 5Years >20 OR
+Profit growth 5Years > 20) AND
+Current price / High price > 0.8 AND
+DMA 50 > DMA 200 AND
+RSI >=55 AND
+Free cash flow 3years > 0 AND
+Free cash flow last year > 0 AND
+Pledged percentage < 1 AND
+Promoter holding > 50 AND
+Market Capitalization > 1000 AND
+Debt to equity < 1.5
