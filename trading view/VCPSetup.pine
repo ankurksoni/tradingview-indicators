@@ -284,6 +284,8 @@ string _EPS_ID  = "EARNINGS_PER_SHARE_DILUTED"
 string _REV_ID  = "TOTAL_REVENUE"
 string _NI_ID   = "NET_INCOME"
 string _OI_ID   = "OPER_INCOME"
+string _OCF_ID  = "CASH_F_OPERATING_ACTIVITIES"
+string _CAPEX_ID = "CAPITAL_EXPENDITURES"
 
 _getFinancial(_id, _per) =>
     float _val = request.financial(syminfo.tickerid, _id, _per, barmerge.gaps_on, ignore_invalid_symbol=true)
@@ -320,6 +322,10 @@ float _mc_raw   = request.financial(syminfo.tickerid, "TOTAL_SHARES_OUTSTANDING"
 float _mc       = _mc_raw * close / 10000000
 string _mc_str  = na(_mc) or nz(_mc) == 0 ? "" : str.tostring(math.round(_mc, 0)) + " Cr"
 
+// Equity Capital (paid-up share capital)
+float _ec_raw   = request.financial(syminfo.tickerid, "COMMON_STOCK_PAR", "FQ", ignore_invalid_symbol=true)
+float _ec       = na(_ec_raw) ? na : _ec_raw / 10000000
+
 // Valuation ratios — computed from raw financials (pre-computed ratio IDs unavailable for NSE)
 float _bvps     = request.financial(syminfo.tickerid, "BOOK_VALUE_PER_SHARE", "FQ", ignore_invalid_symbol=true)
 float _pb       = na(_bvps) or _bvps == 0 ? na : close / _bvps
@@ -330,6 +336,17 @@ float _peg      = na(_peg_fq) ? _peg_fy : _peg_fq
 
 float _epsTtm   = request.financial(syminfo.tickerid, _EPS_ID, "TTM", ignore_invalid_symbol=true)
 float _pe       = na(_epsTtm) or _epsTtm == 0 ? na : close / _epsTtm
+
+// FCF (TTM) = Operating Cash Flow + CapEx (CapEx reported as a negative outflow).
+// NSE companies file cash flow statements annually only, so TTM (built from quarterly
+// data) is unavailable here — fall back to the latest full-year figure.
+float _ocf_ttm   = request.financial(syminfo.tickerid, _OCF_ID,   "TTM", ignore_invalid_symbol=true)
+float _capex_ttm = request.financial(syminfo.tickerid, _CAPEX_ID, "TTM", ignore_invalid_symbol=true)
+float _ocf_fy    = request.financial(syminfo.tickerid, _OCF_ID,   "FY", barmerge.gaps_off, ignore_invalid_symbol=true)
+float _capex_fy  = request.financial(syminfo.tickerid, _CAPEX_ID, "FY", barmerge.gaps_off, ignore_invalid_symbol=true)
+float _ocf       = na(_ocf_ttm)   ? _ocf_fy   : _ocf_ttm
+float _capex     = na(_capex_ttm) ? _capex_fy : _capex_ttm
+float _fcf       = na(_ocf) or na(_capex) ? na : math.round((_ocf + _capex) / 10000000.0, 2)
 
 string _topLeftVal = i_topLeft == "FF" ? _ff_str : _mc_str
 
@@ -345,14 +362,16 @@ _ftVal(_isEps, _t, _col, _row, _arr, _i) =>
     float _val = _isEps ? _raw / 1 : _raw / 1
     string _fmt = _isEps ? "#.##" : "#,###.##"
     string _txt = na(_val) ? "" : str.tostring(_val, _fmt)
-    table.cell(_t, _col, _row, _txt, text_color=_textClr, text_size=i_tblSize)
+    color  _clr = na(_val) ? _textClr : _val < 0 ? _dnClr : _val > 0 ? _upClr : _flatClr
+    table.cell(_t, _col, _row, _txt, text_color=_clr, text_size=i_tblSize)
 
 _ftPe(_t, _col, _row, _epsArr, _i, _annualize) =>
     float _eps    = array.get(_epsArr, _i)
     float _annEps = _annualize ? _eps * 4 : _eps
     float _val    = na(_annEps) or _annEps == 0 ? na : close / _annEps
     string _txt   = na(_val) ? "" : str.tostring(_val, "#.##") + "x"
-    table.cell(_t, _col, _row, _txt, text_color=_textClr, text_size=i_tblSize)
+    color  _clr   = na(_val) ? _textClr : _val < 0 ? _dnClr : _textClr
+    table.cell(_t, _col, _row, _txt, text_color=_clr, text_size=i_tblSize)
 
 _ftYoY(_t, _col, _row, _arr, _i, _cmpr) =>
     float _v1 = array.get(_arr, _i)
@@ -379,7 +398,7 @@ _ftOmQoQ(_t, _col, _row, _oiArr, _revArr, _i) =>
     table.cell(_t, _col, _row, _txt, text_halign=text.align_right, text_color=_clr, text_size=i_tblSize)
 
 // Valuation metrics table (positioned at top-right)
-var table _valTbl = table.new("top_right", columns=2, rows=9,
+var table _valTbl = table.new("top_right", columns=2, rows=11,
      bgcolor=_bgClr, frame_color=_frameCol, frame_width=1, border_color=_frameCol, border_width=1)
 
 // Quarterly financials table
@@ -394,6 +413,9 @@ if barstate.islast
         string _pegFmt = na(_peg) ? "N/A" : str.tostring(math.round(_peg, 2))
         string _pbFmt  = na(_pb)  ? "N/A" : str.tostring(math.round(_pb, 2)) + "x"
         string _peFmt  = na(_pe)  ? "N/A" : str.tostring(math.round(_pe, 2)) + "x"
+        string _fcfFmt = na(_fcf) ? "N/A" : str.tostring(math.round(_fcf), "#,###")
+        color  _fcfClr = na(_fcf) ? _textClr : _fcf < 0 ? _dnClr : _fcf > 0 ? _upClr : _flatClr
+        string _ecFmt  = na(_ec) ? "N/A" : str.tostring(math.round(_ec, 2), "#,###.##") + " Cr"
 
         _ftHead(_valTbl, 0, 0, "Metric")
         _ftHead(_valTbl, 1, 0, "Value")
@@ -401,30 +423,36 @@ if barstate.islast
         _ftHead(_valTbl, 0, 1, "Mkt Cap")
         table.cell(_valTbl, 1, 1, _mcFmt, bgcolor=_bgClr, text_color=_textClr, text_size=i_tblSize)
 
-        _ftHead(_valTbl, 0, 2, "P/E")
-        table.cell(_valTbl, 1, 2, _peFmt, bgcolor=_bgClr, text_color=_textClr, text_size=i_tblSize)
+        _ftHead(_valTbl, 0, 2, "Equity Cap")
+        table.cell(_valTbl, 1, 2, _ecFmt, bgcolor=_bgClr, text_color=_textClr, text_size=i_tblSize)
 
-        _ftHead(_valTbl, 0, 3, "PEG")
-        table.cell(_valTbl, 1, 3, _pegFmt, bgcolor=_bgClr, text_color=_textClr, text_size=i_tblSize)
+        _ftHead(_valTbl, 0, 3, "FCF(cr)")
+        table.cell(_valTbl, 1, 3, _fcfFmt, bgcolor=_bgClr, text_color=_fcfClr, text_size=i_tblSize)
 
-        _ftHead(_valTbl, 0, 4, "P/B")
-        table.cell(_valTbl, 1, 4, _pbFmt, bgcolor=_bgClr, text_color=_textClr, text_size=i_tblSize)
+        _ftHead(_valTbl, 0, 4, "P/E")
+        table.cell(_valTbl, 1, 4, _peFmt, bgcolor=_bgClr, text_color=_textClr, text_size=i_tblSize)
 
-        _ftHead(_valTbl, 0, 5, "Listed")
+        _ftHead(_valTbl, 0, 5, "PEG")
+        table.cell(_valTbl, 1, 5, _pegFmt, bgcolor=_bgClr, text_color=_textClr, text_size=i_tblSize)
+
+        _ftHead(_valTbl, 0, 6, "P/B")
+        table.cell(_valTbl, 1, 6, _pbFmt, bgcolor=_bgClr, text_color=_textClr, text_size=i_tblSize)
+
+        _ftHead(_valTbl, 0, 7, "Listed")
         string _listFmt = na(firstYear) ? "N/A" : str.tostring(firstYear)
-        table.cell(_valTbl, 1, 5, _listFmt, bgcolor=_bgClr, text_color=_textClr, text_size=i_tblSize)
+        table.cell(_valTbl, 1, 7, _listFmt, bgcolor=_bgClr, text_color=_textClr, text_size=i_tblSize)
 
-        _ftHead(_valTbl, 0, 6, "Sector")
+        _ftHead(_valTbl, 0, 8, "Sector")
         string _sectorVal = na(syminfo.sector) ? "N/A" : syminfo.sector
-        table.cell(_valTbl, 1, 6, _sectorVal, bgcolor=_bgClr, text_color=_textClr, text_size=i_tblSize)
+        table.cell(_valTbl, 1, 8, _sectorVal, bgcolor=_bgClr, text_color=_textClr, text_size=i_tblSize)
 
-        _ftHead(_valTbl, 0, 7, "Industry")
+        _ftHead(_valTbl, 0, 9, "Industry")
         string _industryVal = na(syminfo.industry) ? "N/A" : syminfo.industry
-        table.cell(_valTbl, 1, 7, _industryVal, bgcolor=_bgClr, text_color=_textClr, text_size=i_tblSize)
+        table.cell(_valTbl, 1, 9, _industryVal, bgcolor=_bgClr, text_color=_textClr, text_size=i_tblSize)
 
-        _ftHead(_valTbl, 0, 8, "10:20 EMA")
+        _ftHead(_valTbl, 0, 10, "10:20 EMA")
         string _ema1020Fmt = ema20SupportCount == 0 ? "N/A" : str.tostring(math.round(ema10SupportCount / ema20SupportCount * 100)) + "%"
-        table.cell(_valTbl, 1, 8, _ema1020Fmt, bgcolor=_bgClr, text_color=_textClr, text_size=i_tblSize)
+        table.cell(_valTbl, 1, 10, _ema1020Fmt, bgcolor=_bgClr, text_color=_textClr, text_size=i_tblSize)
 
     // ─── Quarterly Financials Table ───
     if i_showFinTbl
