@@ -328,6 +328,9 @@ float _peg_fy   = request.financial(syminfo.tickerid, "PEG_RATIO", "FY", ignore_
 float _peg_fq   = request.financial(syminfo.tickerid, "PEG_RATIO", "FQ", ignore_invalid_symbol=true)
 float _peg      = na(_peg_fq) ? _peg_fy : _peg_fq
 
+float _epsTtm   = request.financial(syminfo.tickerid, _EPS_ID, "TTM", ignore_invalid_symbol=true)
+float _pe       = na(_epsTtm) or _epsTtm == 0 ? na : close / _epsTtm
+
 string _topLeftVal = i_topLeft == "FF" ? _ff_str : _mc_str
 
 _ftHead(_t, _col, _row, _txt) =>
@@ -342,6 +345,13 @@ _ftVal(_isEps, _t, _col, _row, _arr, _i) =>
     float _val = _isEps ? _raw / 1 : _raw / 1
     string _fmt = _isEps ? "#.##" : "#,###.##"
     string _txt = na(_val) ? "" : str.tostring(_val, _fmt)
+    table.cell(_t, _col, _row, _txt, text_color=_textClr, text_size=i_tblSize)
+
+_ftPe(_t, _col, _row, _epsArr, _i, _annualize) =>
+    float _eps    = array.get(_epsArr, _i)
+    float _annEps = _annualize ? _eps * 4 : _eps
+    float _val    = na(_annEps) or _annEps == 0 ? na : close / _annEps
+    string _txt   = na(_val) ? "" : str.tostring(_val, "#.##") + "x"
     table.cell(_t, _col, _row, _txt, text_color=_textClr, text_size=i_tblSize)
 
 _ftYoY(_t, _col, _row, _arr, _i, _cmpr) =>
@@ -369,12 +379,12 @@ _ftOmQoQ(_t, _col, _row, _oiArr, _revArr, _i) =>
     table.cell(_t, _col, _row, _txt, text_halign=text.align_right, text_color=_clr, text_size=i_tblSize)
 
 // Valuation metrics table (positioned at top-right)
-var table _valTbl = table.new("top_right", columns=2, rows=8,
+var table _valTbl = table.new("top_right", columns=2, rows=9,
      bgcolor=_bgClr, frame_color=_frameCol, frame_width=1, border_color=_frameCol, border_width=1)
 
 // Quarterly financials table
 int _colCount = i_dataSize - 4
-var table _finTbl = table.new(i_tblPosY + "_" + i_tblPosX, columns=_colCount + 1, rows=9,
+var table _finTbl = table.new(i_tblPosY + "_" + i_tblPosX, columns=_colCount + 1, rows=10,
      bgcolor=_bgClr, frame_color=_frameCol, frame_width=1, border_color=_frameCol, border_width=1)
 
 if barstate.islast
@@ -383,6 +393,7 @@ if barstate.islast
         string _mcFmt = na(_mc) or nz(_mc) == 0 ? "N/A" : "₹" + str.tostring(math.round(_mc, 0), "#,###") + " Cr"
         string _pegFmt = na(_peg) ? "N/A" : str.tostring(math.round(_peg, 2))
         string _pbFmt  = na(_pb)  ? "N/A" : str.tostring(math.round(_pb, 2)) + "x"
+        string _peFmt  = na(_pe)  ? "N/A" : str.tostring(math.round(_pe, 2)) + "x"
 
         _ftHead(_valTbl, 0, 0, "Metric")
         _ftHead(_valTbl, 1, 0, "Value")
@@ -390,27 +401,30 @@ if barstate.islast
         _ftHead(_valTbl, 0, 1, "Mkt Cap")
         table.cell(_valTbl, 1, 1, _mcFmt, bgcolor=_bgClr, text_color=_textClr, text_size=i_tblSize)
 
-        _ftHead(_valTbl, 0, 2, "PEG")
-        table.cell(_valTbl, 1, 2, _pegFmt, bgcolor=_bgClr, text_color=_textClr, text_size=i_tblSize)
+        _ftHead(_valTbl, 0, 2, "P/E")
+        table.cell(_valTbl, 1, 2, _peFmt, bgcolor=_bgClr, text_color=_textClr, text_size=i_tblSize)
 
-        _ftHead(_valTbl, 0, 3, "P/B")
-        table.cell(_valTbl, 1, 3, _pbFmt, bgcolor=_bgClr, text_color=_textClr, text_size=i_tblSize)
+        _ftHead(_valTbl, 0, 3, "PEG")
+        table.cell(_valTbl, 1, 3, _pegFmt, bgcolor=_bgClr, text_color=_textClr, text_size=i_tblSize)
 
-        _ftHead(_valTbl, 0, 4, "Listed")
+        _ftHead(_valTbl, 0, 4, "P/B")
+        table.cell(_valTbl, 1, 4, _pbFmt, bgcolor=_bgClr, text_color=_textClr, text_size=i_tblSize)
+
+        _ftHead(_valTbl, 0, 5, "Listed")
         string _listFmt = na(firstYear) ? "N/A" : str.tostring(firstYear)
-        table.cell(_valTbl, 1, 4, _listFmt, bgcolor=_bgClr, text_color=_textClr, text_size=i_tblSize)
+        table.cell(_valTbl, 1, 5, _listFmt, bgcolor=_bgClr, text_color=_textClr, text_size=i_tblSize)
 
-        _ftHead(_valTbl, 0, 5, "Sector")
+        _ftHead(_valTbl, 0, 6, "Sector")
         string _sectorVal = na(syminfo.sector) ? "N/A" : syminfo.sector
-        table.cell(_valTbl, 1, 5, _sectorVal, bgcolor=_bgClr, text_color=_textClr, text_size=i_tblSize)
+        table.cell(_valTbl, 1, 6, _sectorVal, bgcolor=_bgClr, text_color=_textClr, text_size=i_tblSize)
 
-        _ftHead(_valTbl, 0, 6, "Industry")
+        _ftHead(_valTbl, 0, 7, "Industry")
         string _industryVal = na(syminfo.industry) ? "N/A" : syminfo.industry
-        table.cell(_valTbl, 1, 6, _industryVal, bgcolor=_bgClr, text_color=_textClr, text_size=i_tblSize)
+        table.cell(_valTbl, 1, 7, _industryVal, bgcolor=_bgClr, text_color=_textClr, text_size=i_tblSize)
 
-        _ftHead(_valTbl, 0, 7, "10:20 EMA")
+        _ftHead(_valTbl, 0, 8, "10:20 EMA")
         string _ema1020Fmt = ema20SupportCount == 0 ? "N/A" : str.tostring(math.round(ema10SupportCount / ema20SupportCount * 100)) + "%"
-        table.cell(_valTbl, 1, 7, _ema1020Fmt, bgcolor=_bgClr, text_color=_textClr, text_size=i_tblSize)
+        table.cell(_valTbl, 1, 8, _ema1020Fmt, bgcolor=_bgClr, text_color=_textClr, text_size=i_tblSize)
 
     // ─── Quarterly Financials Table ───
     if i_showFinTbl
@@ -425,32 +439,37 @@ if barstate.islast
         for col = 0 to _colCount - 1
             _ftVal(true, _finTbl, col + 1, 3, _epsArr, col)
 
-        // Row 4: %EPS or YoY
+        // Row 4: P/E (current price ÷ annualized EPS for the period)
+        _ftHead(_finTbl, 0, 4, "P/E")
+        for col = 0 to _colCount - 1
+            _ftPe(_finTbl, col + 1, 4, _epsArr, col, i_finPer != "FY")
+
+        // Row 5: %EPS or YoY
         string _epsLbl = i_finPer == "FY" ? "YoY" : "%EPS"
-        _ftHead(_finTbl, 0, 4, _epsLbl)
+        _ftHead(_finTbl, 0, 5, _epsLbl)
         for col = 0 to _colCount - 1
-            _ftYoY(_finTbl, col + 1, 4, _epsArr, col, i_finPer == "FY" ? 1 : 4)
+            _ftYoY(_finTbl, col + 1, 5, _epsArr, col, i_finPer == "FY" ? 1 : 4)
 
-        // Row 5: %Sales or Sales YoY
+        // Row 6: %Sales or Sales YoY
         string _salesLbl = i_finPer == "FY" ? "Sales YoY" : "%Sls"
-        _ftHead(_finTbl, 0, 5, _salesLbl)
+        _ftHead(_finTbl, 0, 6, _salesLbl)
         for col = 0 to _colCount - 1
-            _ftYoY(_finTbl, col + 1, 5, _revArr, col, i_finPer == "FY" ? 1 : 4)
+            _ftYoY(_finTbl, col + 1, 6, _revArr, col, i_finPer == "FY" ? 1 : 4)
 
-        // Row 6: %NI
-        _ftHead(_finTbl, 0, 6, "%NI")
+        // Row 7: %NI
+        _ftHead(_finTbl, 0, 7, "%NI")
         for col = 0 to _colCount - 1
-            _ftYoY(_finTbl, col + 1, 6, _niArr, col, 1)
+            _ftYoY(_finTbl, col + 1, 7, _niArr, col, 1)
 
-        // Row 7: %OI
-        _ftHead(_finTbl, 0, 7, "%OI")
+        // Row 8: %OI
+        _ftHead(_finTbl, 0, 8, "%OI")
         for col = 0 to _colCount - 1
-            _ftYoY(_finTbl, col + 1, 7, _oiArr, col, 1)
+            _ftYoY(_finTbl, col + 1, 8, _oiArr, col, 1)
 
-        // Row 8: %OM
-        _ftHead(_finTbl, 0, 8, "%OM")
+        // Row 9: %OM
+        _ftHead(_finTbl, 0, 9, "%OM")
         for col = 0 to _colCount - 1
-            _ftOmQoQ(_finTbl, col + 1, 8, _oiArr, _revArr, col)
+            _ftOmQoQ(_finTbl, col + 1, 9, _oiArr, _revArr, col)
 
 // ═══════════════════════════════════════════════════════════════
 //  VISUALS
