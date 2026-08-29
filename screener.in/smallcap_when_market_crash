@@ -1,0 +1,18 @@
+Free cash flow last year > 0 AND
+Market Capitalization > 100 AND
+Market Capitalization < 1000 AND
+Promoter holding > 50 AND
+Pledged percentage = 0 AND
+Growth potential > 0 AND
+PEG Ratio < 2 AND
+PEG Ratio > 0 AND
+Debt to equity < 1 AND
+Average return on equity 5Years > 10% AND
+Average return on capital employed 5Years > 10% AND
+Current price < DMA 200 * 1.1 AND
+Equity capital < 50 AND
+IVP > 1 AND
+Sales growth 5Years > 10% AND
+Profit growth 5Years > 10% AND
+DMA 50 > DMA 200 AND
+Current price > 0.85 * High price

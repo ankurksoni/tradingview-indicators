@@ -12,4 +12,8 @@ Free cash flow last year > 0 AND
 Pledged percentage < 1 AND
 Promoter holding > 50 AND
 Market Capitalization > 1000 AND
-Debt to equity < 1.5
+Debt to equity < 1.5 AND
+Volume 1week average > Volume 1month average AND
+(Change in FII holding > 0 OR
+Change in DII holding > 0) AND
+Sales latest quarter > Sales preceding year quarter

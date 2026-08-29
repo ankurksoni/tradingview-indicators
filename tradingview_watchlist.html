@@ -63,6 +63,11 @@
       <input type="file" id="csvFile" accept=".csv" />
     </div>
 
+    <div class="box">
+      <h3>CSV File (MarketSmith export)</h3>
+      <input type="file" id="marketsmithCsvFile" accept=".csv" />
+    </div>
+
     <div id="output"></div>
 
     <script>
@@ -72,9 +77,13 @@
 
       document
         .getElementById("csvFile")
-        .addEventListener("change", readCsv);
+        .addEventListener("change", (e) => readCsvByColumn(e, "nse code"));
 
-      function readCsv(e) {
+      document
+        .getElementById("marketsmithCsvFile")
+        .addEventListener("change", (e) => readCsvByColumn(e, "symbol"));
+
+      function readCsvByColumn(e, columnName) {
         const file = e.target.files[0];
 
         const reader = new FileReader();
@@ -87,11 +96,11 @@
           const header = rows[0].map((h) => String(h).trim());
 
           const colIndex = header.findIndex(
-            (h) => h.toLowerCase() === "nse code",
+            (h) => h.toLowerCase() === columnName,
           );
 
           if (colIndex === -1) {
-            alert('Column "NSE Code" not found in CSV file.');
+            alert('Column "' + columnName + '" not found in CSV file.');
             return;
           }
 
