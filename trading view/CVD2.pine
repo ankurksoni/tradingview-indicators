@@ -91,6 +91,16 @@ color   bgDivColorInput         = input.color(BG_DIV,       "",                 
 bool    bgResetInput            = input.bool(true,          "Color background on resets ",      inline = "17", group = GRP1)
 color   bgResetColorInput       = input.color(BG_RESETS,    "",                                 inline = "17", group = GRP1)
 bool    showZeroLineInput       = input.bool(true,         "Zero line",                         inline = "18", group = GRP1)
+
+string  GRP2 = "ADX (from CVD candles)"
+string  TT_ADX      = "When enabled, an ADX line calculated from the CVD candle's high/low/close is shown instead of the CVD candles."
+bool    showAdxInput            = input.bool(false,         "Show ADX instead of CVD candles",  inline = "20", group = GRP2, tooltip = TT_ADX)
+int     adxLenInput             = input.int(14,             "DI Length",                        inline = "21", group = GRP2, minval = 1)
+int     adxSmoothInput          = input.int(14,             "ADX Smoothing",                    inline = "21", group = GRP2, minval = 1)
+color   adxColorInput           = input.color(#FF6D00,      "ADX line",                         inline = "22", group = GRP2)
+color   diPlusColorInput        = input.color(LIME,         "+DI",                              inline = "22", group = GRP2)
+color   diMinusColorInput       = input.color(PINK,         "-DI",                              inline = "22", group = GRP2)
+bool    showDiLinesInput        = input.bool(false,         "Show +DI / -DI lines",             inline = "23", group = GRP2)
 bool    showInfoBoxInput        = input.bool(true,          "Show information box ",            group = GRP1)
 string  infoBoxSizeInput        = input.string("small",     "Size ",                            inline = "19", group = GRP1, options = ["tiny", "small", "normal", "large", "huge", "auto"])
 string  infoBoxYPosInput        = input.string("bottom",    "↕",                                inline = "19", group = GRP1, options = ["top", "middle", "bottom"])
@@ -223,6 +233,18 @@ else if timeframe.in_seconds() < 60 * 2
 
 // Detect divergences between volume delta and the bar's polarity.
 bool divergence = delta != 0 and math.sign(delta) != math.sign(close - open)
+
+// ADX calculated from the CVD candle's high/low/close, in place of chart OHLC.
+float cvdUpMove   = cvdH - nz(cvdH[1])
+float cvdDnMove   = nz(cvdL[1]) - cvdL
+float cvdPlusDm   = cvdUpMove > cvdDnMove and cvdUpMove > 0 ? cvdUpMove : 0
+float cvdMinusDm  = cvdDnMove > cvdUpMove and cvdDnMove > 0 ? cvdDnMove : 0
+float cvdTrueRange = math.max(cvdH - cvdL, math.max(math.abs(cvdH - nz(cvdC[1])), math.abs(cvdL - nz(cvdC[1]))))
+float cvdTrur      = ta.rma(cvdTrueRange, adxLenInput)
+float cvdPlusDi    = 100 * ta.rma(cvdPlusDm, adxLenInput) / cvdTrur
+float cvdMinusDi   = 100 * ta.rma(cvdMinusDm, adxLenInput) / cvdTrur
+float cvdDx        = 100 * math.abs(cvdPlusDi - cvdMinusDi) / (cvdPlusDi + cvdMinusDi)
+float cvdAdx       = ta.rma(cvdDx, adxSmoothInput)
 // }
 
 
@@ -237,7 +259,12 @@ color totVolCandleColor = delta > 0 ? upTotVolColorInput : dnTotVolColorInput
 plotcandle(showTotVolInput ? cvdO : na, math.max(cvdO, totalVolumeLevel), math.min(cvdO, totalVolumeLevel), totalVolumeLevel, "CVD", color = color.new(totVolCandleColor, totVolBodyTranspInput), wickcolor = totVolCandleColor, bordercolor = totVolCandleColor)
 
 // CVD candles.
-plotcandle(showCandlesInput ? cvdO : na, cvdH, cvdL, cvdC, "CVD", color = candleColor, wickcolor = candleColor, bordercolor = candleColor)
+plotcandle(showCandlesInput and not showAdxInput ? cvdO : na, cvdH, cvdL, cvdC, "CVD", color = candleColor, wickcolor = candleColor, bordercolor = candleColor)
+
+// ADX from CVD candles (replaces the CVD candles when enabled).
+plot(showAdxInput ? cvdAdx : na, "ADX (from CVD)", adxColorInput, 2)
+plot(showAdxInput and showDiLinesInput ? cvdPlusDi : na, "+DI (from CVD)", diPlusColorInput)
+plot(showAdxInput and showDiLinesInput ? cvdMinusDi : na, "-DI (from CVD)", diMinusColorInput)
 
 // CVD line.
 plot(showLineInput ? cvdC : na, "CVD line", cvdC > 0 ? lineUpColorInput : lineDnColorInput)

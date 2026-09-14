@@ -1,0 +1,156 @@
+//@version=6
+indicator("Valuation Table", shorttitle="Valuation", overlay=true)
+
+// ═══════════════════════════════════════════════════════════════
+//  LISTING YEAR — detect from first bar
+// ═══════════════════════════════════════════════════════════════
+var int firstYear = na
+
+if na(firstYear)
+    firstYear := year(time)
+
+// ═══════════════════════════════════════════════════════════════
+//  INPUTS
+// ═══════════════════════════════════════════════════════════════
+
+string G_VIS = "Visuals"
+bool  i_darkMode = input.bool(true, "Dark Mode", group=G_VIS, tooltip="Enable for dark chart themes. Adjusts table colors.")
+
+string G_EMA = "EMA Support"
+int   i_emaSupportLookback = input.int(252, "EMA Support Lookback Bars", minval=10, maxval=2000, group=G_EMA)
+
+string G_FIN = "════ Valuation Table ════"
+string i_tblSize = input.string("small", "Table Size", group=G_FIN, options=["tiny","small","normal","large","huge","auto"], inline="tbl")
+string i_tblPosY = input.string("top",   "↕",          group=G_FIN, options=["top","middle","bottom"],                       inline="tbl")
+string i_tblPosX = input.string("right", "↔",          group=G_FIN, options=["left","center","right"],                       inline="tbl")
+
+// ═══════════════════════════════════════════════════════════════
+//  EMAs — needed for the 10:20 EMA support ratio row
+// ═══════════════════════════════════════════════════════════════
+
+float ema10 = ta.ema(close, 10)
+float ema20 = ta.ema(close, 20)
+
+bool ema10SupportTouch = low < ema10 and close > ema10
+bool ema20SupportTouch = low < ema20 and close > ema20
+
+int ema10SupportCount = int(math.sum(ema10SupportTouch ? 1.0 : 0.0, i_emaSupportLookback))
+int ema20SupportCount = int(math.sum(ema20SupportTouch ? 1.0 : 0.0, i_emaSupportLookback))
+
+// ═══════════════════════════════════════════════════════════════
+//  VALUATION METRICS
+// ═══════════════════════════════════════════════════════════════
+
+color _frameCol = i_darkMode ? color.new(#999999, 50)      : color.rgb(241, 241, 241)
+color _textClr  = i_darkMode ? color.new(color.white, 0)   : color.new(color.black, 0)
+color _bgClr    = i_darkMode ? color.new(color.white, 100) : color.new(#f0f0f0, 0)
+color _hdClr    = i_darkMode ? color.new(#444444, 0)       : color.new(#d0d0d0, 0)
+color _upClr    = i_darkMode ? color.new(color.lime, 0)    : color.new(color.rgb(31, 12, 239, 16), 0)
+color _dnClr    = i_darkMode ? color.new(color.red, 0)     : color.new(color.rgb(213, 27, 182), 10)
+color _flatClr  = i_darkMode ? color.new(color.yellow, 0)  : color.new(color.orange, 30)
+
+string _NI_ID  = "NET_INCOME"
+string _EPS_ID = "EARNINGS_PER_SHARE_DILUTED"
+string _OCF_ID = "CASH_F_OPERATING_ACTIVITIES"
+string _CAPEX_ID = "CAPITAL_EXPENDITURES"
+
+// Market Cap
+float _mc_raw = request.financial(syminfo.tickerid, "TOTAL_SHARES_OUTSTANDING", "FQ")
+float _mc     = _mc_raw * close / 10000000
+
+// Equity Capital (paid-up share capital)
+float _ec_raw = request.financial(syminfo.tickerid, "COMMON_STOCK_PAR", "FQ", ignore_invalid_symbol=true)
+float _ec     = na(_ec_raw) ? na : _ec_raw / 10000000
+
+// Valuation ratios — computed from raw financials (pre-computed ratio IDs unavailable for NSE)
+float _bvps = request.financial(syminfo.tickerid, "BOOK_VALUE_PER_SHARE", "FQ", ignore_invalid_symbol=true)
+float _pb   = na(_bvps) or _bvps == 0 ? na : close / _bvps
+
+float _peg_fy = request.financial(syminfo.tickerid, "PEG_RATIO", "FY", ignore_invalid_symbol=true)
+float _peg_fq = request.financial(syminfo.tickerid, "PEG_RATIO", "FQ", ignore_invalid_symbol=true)
+float _peg    = na(_peg_fq) ? _peg_fy : _peg_fq
+
+// ROE = Net Income (TTM) / Total Equity (latest quarter)
+float _ni_ttm    = request.financial(syminfo.tickerid, _NI_ID, "TTM", ignore_invalid_symbol=true)
+float _totEquity = request.financial(syminfo.tickerid, "TOTAL_EQUITY", "FQ", ignore_invalid_symbol=true)
+float _roe       = na(_ni_ttm) or na(_totEquity) or _totEquity == 0 ? na : _ni_ttm / _totEquity * 100
+
+// ROCE = EBIT (TTM) / Capital Employed (Total Assets − Current Liabilities, latest quarter)
+float _ebit_ttm    = request.financial(syminfo.tickerid, "PRETAX_INCOME", "TTM", ignore_invalid_symbol=true)
+float _totAssets   = request.financial(syminfo.tickerid, "TOTAL_ASSETS", "FQ", ignore_invalid_symbol=true)
+float _curLiab     = request.financial(syminfo.tickerid, "TOTAL_CURRENT_LIABILITIES", "FQ", ignore_invalid_symbol=true)
+float _capEmployed = na(_totAssets) or na(_curLiab) ? na : _totAssets - _curLiab
+float _roce        = na(_ebit_ttm) or na(_capEmployed) or _capEmployed == 0 ? na : _ebit_ttm / _capEmployed * 100
+
+float _epsTtm = request.financial(syminfo.tickerid, _EPS_ID, "TTM", ignore_invalid_symbol=true)
+float _pe     = na(_epsTtm) or _epsTtm == 0 ? na : close / _epsTtm
+
+// FCF = Operating Cash Flow + CapEx (CapEx reported as a negative outflow).
+// NSE companies file cash flow statements annually only, so TTM (built from quarterly
+// data) is always unavailable here — use the latest full-year figure directly.
+float _ocf       = request.financial(syminfo.tickerid, _OCF_ID,   "FY", barmerge.gaps_off, ignore_invalid_symbol=true)
+float _capex     = request.financial(syminfo.tickerid, _CAPEX_ID, "FY", barmerge.gaps_off, ignore_invalid_symbol=true)
+float _fcf       = na(_ocf) or na(_capex) ? na : math.round((_ocf + _capex) / 10000000.0, 2)
+
+_ftHead(_t, _col, _row, _txt) =>
+    table.cell(_t, _col, _row, _txt, bgcolor=_hdClr, text_color=_textClr, text_size=i_tblSize)
+
+// Valuation metrics table
+var table _valTbl = table.new(i_tblPosY + "_" + i_tblPosX, columns=2, rows=13,
+     bgcolor=_bgClr, frame_color=_frameCol, frame_width=1, border_color=_frameCol, border_width=1)
+
+if barstate.islast
+    string _mcFmt  = na(_mc) or nz(_mc) == 0 ? "N/A" : "₹" + str.tostring(math.round(_mc, 0), "#,###") + " Cr"
+    string _pegFmt = na(_peg) ? "N/A" : str.tostring(math.round(_peg, 2))
+    string _pbFmt  = na(_pb)  ? "N/A" : str.tostring(math.round(_pb, 2)) + "x"
+    string _peFmt  = na(_pe)  ? "N/A" : str.tostring(math.round(_pe, 2)) + "x"
+    string _fcfFmt = na(_fcf) ? "N/A" : str.tostring(math.round(_fcf), "#,###")
+    color  _fcfClr = na(_fcf) ? _textClr : _fcf < 0 ? _dnClr : _fcf > 0 ? _upClr : _flatClr
+    string _ecFmt  = na(_ec) ? "N/A" : str.tostring(math.round(_ec, 2), "#,###.##") + " Cr"
+    string _roeFmt = na(_roe)  ? "N/A" : str.tostring(math.round(_roe, 2)) + "%"
+    color  _roeClr = na(_roe)  ? _textClr : _roe < 0 ? _dnClr : _upClr
+    string _roceFmt = na(_roce) ? "N/A" : str.tostring(math.round(_roce, 2)) + "%"
+    color  _roceClr = na(_roce) ? _textClr : _roce < 0 ? _dnClr : _upClr
+
+    _ftHead(_valTbl, 0, 0, "Metric")
+    _ftHead(_valTbl, 1, 0, "Value")
+
+    _ftHead(_valTbl, 0, 1, "Mkt Cap")
+    table.cell(_valTbl, 1, 1, _mcFmt, bgcolor=_bgClr, text_color=_textClr, text_size=i_tblSize)
+
+    _ftHead(_valTbl, 0, 2, "Equity Cap")
+    table.cell(_valTbl, 1, 2, _ecFmt, bgcolor=_bgClr, text_color=_textClr, text_size=i_tblSize)
+
+    _ftHead(_valTbl, 0, 3, "FCF(cr)")
+    table.cell(_valTbl, 1, 3, _fcfFmt, bgcolor=_bgClr, text_color=_fcfClr, text_size=i_tblSize)
+
+    _ftHead(_valTbl, 0, 4, "P/E")
+    table.cell(_valTbl, 1, 4, _peFmt, bgcolor=_bgClr, text_color=_textClr, text_size=i_tblSize)
+
+    _ftHead(_valTbl, 0, 5, "PEG")
+    table.cell(_valTbl, 1, 5, _pegFmt, bgcolor=_bgClr, text_color=_textClr, text_size=i_tblSize)
+
+    _ftHead(_valTbl, 0, 6, "P/B")
+    table.cell(_valTbl, 1, 6, _pbFmt, bgcolor=_bgClr, text_color=_textClr, text_size=i_tblSize)
+
+    _ftHead(_valTbl, 0, 7, "ROE")
+    table.cell(_valTbl, 1, 7, _roeFmt, bgcolor=_bgClr, text_color=_roeClr, text_size=i_tblSize)
+
+    _ftHead(_valTbl, 0, 8, "ROCE")
+    table.cell(_valTbl, 1, 8, _roceFmt, bgcolor=_bgClr, text_color=_roceClr, text_size=i_tblSize)
+
+    _ftHead(_valTbl, 0, 9, "Listed")
+    string _listFmt = na(firstYear) ? "N/A" : str.tostring(firstYear)
+    table.cell(_valTbl, 1, 9, _listFmt, bgcolor=_bgClr, text_color=_textClr, text_size=i_tblSize)
+
+    _ftHead(_valTbl, 0, 10, "Sector")
+    string _sectorVal = na(syminfo.sector) ? "N/A" : syminfo.sector
+    table.cell(_valTbl, 1, 10, _sectorVal, bgcolor=_bgClr, text_color=_textClr, text_size=i_tblSize)
+
+    _ftHead(_valTbl, 0, 11, "Industry")
+    string _industryVal = na(syminfo.industry) ? "N/A" : syminfo.industry
+    table.cell(_valTbl, 1, 11, _industryVal, bgcolor=_bgClr, text_color=_textClr, text_size=i_tblSize)
+
+    _ftHead(_valTbl, 0, 12, "10:20 EMA")
+    string _ema1020Fmt = ema20SupportCount == 0 ? "N/A" : str.tostring(math.round(ema10SupportCount / ema20SupportCount * 100)) + "%"
+    table.cell(_valTbl, 1, 12, _ema1020Fmt, bgcolor=_bgClr, text_color=_textClr, text_size=i_tblSize)

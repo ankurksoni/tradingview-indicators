@@ -1,0 +1,168 @@
+//@version=6
+indicator("Quarterly Financials Table", shorttitle="Fin Table", overlay=true)
+
+// ═══════════════════════════════════════════════════════════════
+//  INPUTS
+// ═══════════════════════════════════════════════════════════════
+
+string G_VIS = "Visuals"
+bool  i_darkMode = input.bool(true, "Dark Mode", group=G_VIS, tooltip="Enable for dark chart themes. Adjusts table colors.")
+
+string G_FIN = "════ Quarterly Financials ════"
+bool   i_miniMode = input.bool(false,     "Mini Mode",        group=G_FIN, tooltip="Show traffic-light dots instead of values.")
+int    i_dataSize = input.int(4,          "Quarters to show", group=G_FIN, minval=1, maxval=12) + 5
+string i_tblSize  = input.string("small", "Table Size",       group=G_FIN, options=["tiny","small","normal","large","huge","auto"], inline="tbl")
+string i_tblPosY  = input.string("bottom","↕",                group=G_FIN, options=["top","middle","bottom"],                       inline="tbl")
+string i_tblPosX  = input.string("right", "↔",                group=G_FIN, options=["left","center","right"],                       inline="tbl")
+string i_finPer   = input.string("FQ",    "Period",           group=G_FIN, options=["FQ","FY"], tooltip="FQ = quarterly, FY = annual.")
+string i_topLeft  = input.string("FF",    "Top-left cell",    group=G_FIN, options=["FF","Mcap"], tooltip="Free Float (FF) or Market Cap.")
+
+// ═══════════════════════════════════════════════════════════════
+//  QUARTERLY FINANCIALS TABLE
+// ═══════════════════════════════════════════════════════════════
+
+color _frameCol = i_darkMode ? color.new(#999999, 50)      : color.rgb(241, 241, 241)
+color _textClr  = i_darkMode ? color.new(color.white, 0)   : color.new(color.black, 0)
+color _bgClr    = i_darkMode ? color.new(color.white, 100) : color.new(#f0f0f0, 0)
+color _hdClr    = i_darkMode ? color.new(#444444, 0)       : color.new(#d0d0d0, 0)
+color _upClr    = i_darkMode ? color.new(color.lime, 0)    : color.new(color.rgb(31, 12, 239, 16), 0)
+color _dnClr    = i_darkMode ? color.new(color.red, 0)     : color.new(color.rgb(213, 27, 182), 10)
+color _flatClr  = i_darkMode ? color.new(color.yellow, 0)  : color.new(color.orange, 30)
+
+string _EPS_ID  = "EARNINGS_PER_SHARE_DILUTED"
+string _REV_ID  = "TOTAL_REVENUE"
+string _NI_ID   = "NET_INCOME"
+string _OI_ID   = "OPER_INCOME"
+
+_getFinancial(_id, _per) =>
+    float _val = request.financial(syminfo.tickerid, _id, _per, barmerge.gaps_on, ignore_invalid_symbol=true)
+    if _id == _REV_ID
+        _val := math.round(_val / 10.0, 2)
+    _val
+
+_pushArray(arr, val) =>
+    array.unshift(arr, val)
+    array.pop(arr)
+
+float _revRef = request.financial(syminfo.tickerid, _REV_ID, i_finPer, barmerge.gaps_on, ignore_invalid_symbol=true)
+
+var array<int>   _dates  = array.new_int(i_dataSize)
+var array<float> _epsArr = array.new_float(i_dataSize)
+var array<float> _revArr = array.new_float(i_dataSize)
+var array<float> _niArr  = array.new_float(i_dataSize)
+var array<float> _oiArr  = array.new_float(i_dataSize)
+
+if not na(_revRef)
+    _pushArray(_dates,  time)
+    _pushArray(_epsArr, _getFinancial(_EPS_ID, i_finPer))
+    _pushArray(_revArr, _getFinancial(_REV_ID, i_finPer))
+    _pushArray(_niArr,  _getFinancial(_NI_ID,  i_finPer))
+    _pushArray(_oiArr,  _getFinancial(_OI_ID,  i_finPer))
+
+// Free Float
+float _ff_raw  = nz(request.financial(syminfo.tickerid, "FLOAT_SHARES_OUTSTANDING", "FY"))
+float _ff      = na(ta.vwap) ? _ff_raw / 10000000 : _ff_raw * ta.vwap / 10000000
+string _ff_str = na(_ff) or nz(_ff) == 0 ? "" : str.tostring(math.round(_ff)) + " Cr"
+
+// Market Cap
+float _mc_raw  = request.financial(syminfo.tickerid, "TOTAL_SHARES_OUTSTANDING", "FQ")
+float _mc      = _mc_raw * close / 10000000
+string _mc_str = na(_mc) or nz(_mc) == 0 ? "" : str.tostring(math.round(_mc, 0)) + " Cr"
+
+string _topLeftVal = i_topLeft == "FF" ? _ff_str : _mc_str
+
+_ftHead(_t, _col, _row, _txt) =>
+    table.cell(_t, _col, _row, _txt, bgcolor=_hdClr, text_color=_textClr, text_size=i_tblSize)
+
+_ftDate(_t, _col, _row, _txt) =>
+    string _v = str.contains(_txt, "70") ? "" : _txt
+    table.cell(_t, _col, _row, _v, bgcolor=_bgClr, text_color=_textClr, text_size=i_tblSize, text_halign=text.align_left)
+
+_ftVal(_isEps, _t, _col, _row, _arr, _i) =>
+    float _raw = array.get(_arr, _i)
+    float _val = _isEps ? _raw / 1 : _raw / 1
+    string _fmt = _isEps ? "#.##" : "#,###.##"
+    string _txt = na(_val) ? "" : str.tostring(_val, _fmt)
+    color  _clr = na(_val) ? _textClr : _val < 0 ? _dnClr : _val > 0 ? _upClr : _flatClr
+    table.cell(_t, _col, _row, _txt, text_color=_clr, text_size=i_tblSize)
+
+_ftPe(_t, _col, _row, _epsArr, _i, _annualize) =>
+    float _eps    = array.get(_epsArr, _i)
+    float _annEps = _annualize ? _eps * 4 : _eps
+    float _val    = na(_annEps) or _annEps == 0 ? na : close / _annEps
+    string _txt   = na(_val) ? "" : str.tostring(_val, "#.##") + "x"
+    color  _clr   = na(_val) ? _textClr : _val < 0 ? _dnClr : _textClr
+    table.cell(_t, _col, _row, _txt, text_color=_clr, text_size=i_tblSize)
+
+_ftYoY(_t, _col, _row, _arr, _i, _cmpr) =>
+    float _v1 = array.get(_arr, _i)
+    float _v2 = array.get(_arr, _i + _cmpr)
+    _v1 := _v1 == 0 ? 1 : _v1
+    _v2 := math.round(_v2, 1) == 0 ? 0.1 : _v2
+    float _dif = math.round((_v1 - _v2) / math.abs(_v2) * 100)
+    string _sym = na(_dif) ? "" : _dif > 0 ? "+" + str.tostring(_dif) + "%" : str.tostring(_dif) + "%"
+    color  _clr = na(_dif) ? _frameCol : _dif > 0 ? _upClr : _dif < 0 ? _dnClr : _flatClr
+    string _txt = na(_dif) ? "●" : i_miniMode ? "●" : _sym
+    table.cell(_t, _col, _row, _txt, text_halign=text.align_right, text_color=_clr, text_size=i_tblSize)
+
+_ftOmQoQ(_t, _col, _row, _oiArr, _revArr, _i) =>
+    float _oi1  = array.get(_oiArr, _i)
+    float _oi2  = array.get(_oiArr, _i + 1)
+    float _rev1 = array.get(_revArr, _i) * 10
+    float _rev2 = array.get(_revArr, _i + 1) * 10
+    float _om1  = _rev1 == 0 ? na : _oi1 / _rev1 * 100
+    float _om2  = _rev2 == 0 ? na : _oi2 / _rev2 * 100
+    float _dif  = na(_om1) or na(_om2) ? na : math.round(_om1 - _om2, 1)
+    string _sym = na(_dif) ? "" : _dif > 0 ? "+" + str.tostring(_dif) + "pp" : str.tostring(_dif) + "pp"
+    color  _clr = na(_dif) ? _frameCol : _dif > 0 ? _upClr : _dif < 0 ? _dnClr : _flatClr
+    string _txt = na(_dif) ? "●" : i_miniMode ? "●" : _sym
+    table.cell(_t, _col, _row, _txt, text_halign=text.align_right, text_color=_clr, text_size=i_tblSize)
+
+// Quarterly financials table
+int _colCount = i_dataSize - 4
+var table _finTbl = table.new(i_tblPosY + "_" + i_tblPosX, columns=_colCount + 1, rows=10,
+     bgcolor=_bgClr, frame_color=_frameCol, frame_width=1, border_color=_frameCol, border_width=1)
+
+if barstate.islast
+    // Row 2: Quarter dates header
+    _ftHead(_finTbl, 0, 2, "Qtr")
+    for col = 0 to _colCount - 1
+        string _dateStr = str.format("{0, date, MMM-yy}", array.get(_dates, col))
+        _ftDate(_finTbl, col + 1, 2, _dateStr)
+
+    // Row 3: EPS
+    _ftHead(_finTbl, 0, 3, "EPS")
+    for col = 0 to _colCount - 1
+        _ftVal(true, _finTbl, col + 1, 3, _epsArr, col)
+
+    // Row 4: P/E (current price ÷ annualized EPS for the period)
+    _ftHead(_finTbl, 0, 4, "P/E")
+    for col = 0 to _colCount - 1
+        _ftPe(_finTbl, col + 1, 4, _epsArr, col, i_finPer != "FY")
+
+    // Row 5: %EPS or YoY
+    string _epsLbl = i_finPer == "FY" ? "YoY" : "%EPS"
+    _ftHead(_finTbl, 0, 5, _epsLbl)
+    for col = 0 to _colCount - 1
+        _ftYoY(_finTbl, col + 1, 5, _epsArr, col, i_finPer == "FY" ? 1 : 4)
+
+    // Row 6: %Sales or Sales YoY
+    string _salesLbl = i_finPer == "FY" ? "Sales YoY" : "%Sls"
+    _ftHead(_finTbl, 0, 6, _salesLbl)
+    for col = 0 to _colCount - 1
+        _ftYoY(_finTbl, col + 1, 6, _revArr, col, i_finPer == "FY" ? 1 : 4)
+
+    // Row 7: %NI
+    _ftHead(_finTbl, 0, 7, "%NI")
+    for col = 0 to _colCount - 1
+        _ftYoY(_finTbl, col + 1, 7, _niArr, col, 1)
+
+    // Row 8: %OI
+    _ftHead(_finTbl, 0, 8, "%OI")
+    for col = 0 to _colCount - 1
+        _ftYoY(_finTbl, col + 1, 8, _oiArr, col, 1)
+
+    // Row 9: %OM
+    _ftHead(_finTbl, 0, 9, "%OM")
+    for col = 0 to _colCount - 1
+        _ftOmQoQ(_finTbl, col + 1, 9, _oiArr, _revArr, col)

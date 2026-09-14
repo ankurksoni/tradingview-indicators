@@ -16,14 +16,6 @@ string LTF7 = "~50 intrabars per chart bar"
 string LTF8 = "~100 intrabars per chart bar"
 
 // ═══════════════════════════════════════════════════════════════
-//  LISTING YEAR — detect from first bar
-// ═══════════════════════════════════════════════════════════════
-var int firstYear = na
-
-if na(firstYear)
-    firstYear := year(time)
-
-// ═══════════════════════════════════════════════════════════════
 //  INPUTS
 // ═══════════════════════════════════════════════════════════════
 
@@ -64,7 +56,7 @@ float i_tightPct       = input.float(1.5, "Tight zone tolerance % from median", 
 color i_tightColor     = input.color(color.new(color.yellow, 50), "Tight zone color", group=G_VIS)
 
 string G_AVWAP = "AVWAP"
-bool  i_showAvwap   = input.bool(true, "Show Anchored VWAP", group=G_AVWAP)
+bool  i_showAvwap   = input.bool(false, "Show Anchored VWAP", group=G_AVWAP)
 int   i_anchorDate  = input.time(timestamp("30 Mar 2026 00:00 +0000"), "Anchor Date", group=G_AVWAP)
 color i_avwapColor  = input.color(color.new(color.orange, 50), "AVWAP Color", group=G_AVWAP)
 
@@ -77,10 +69,9 @@ bool  i_show50   = input.bool(true,                                   "Show 50 E
 color i_ema50Clr = input.color(color.new(color.green, 5),            "",               inline="e50", group=G_EMA)
 bool  i_show200  = input.bool(true,                                   "Show 200 EMA",   inline="e200", group=G_EMA)
 color i_ema200Clr = input.color(color.new(color.red, 5),             "",               inline="e200", group=G_EMA)
-bool  i_showRS   = input.bool(true,                      "Show RS line",   inline="rs",  group=G_EMA)
+bool  i_showRS   = input.bool(false,                     "Show RS line",   inline="rs",  group=G_EMA)
 string i_idxSym  = input.symbol("NSE:NIFTYSMLCAP250",   "vs",             inline="rs",  group=G_EMA)
 int   i_rsPeriod = input.int(20, "RS Period", minval=5, maxval=200,        inline="rs",  group=G_EMA)
-int   i_emaSupportLookback = input.int(252, "EMA Support Lookback Bars", minval=10, maxval=2000, group=G_EMA)
 
 string G_HLC = "HLC Bar Chart"
 bool  i_showHlc     = input.bool(true,       "Show HLC Bar Chart",  group=G_HLC, tooltip="Overlay HLC bars (open=close) colored by close vs prior close, replacing the look of regular candles.")
@@ -88,21 +79,10 @@ color i_hlcBullClr  = input.color(#0097A7,    "Bullish Color",       group=G_HLC
 color i_hlcBearClr  = input.color(#EC407A,    "Bearish Color",       group=G_HLC)
 
 string G_PRESS = "Minervini Pressure"
-bool  i_showPressure  = input.bool(true,  "Show pressure line at bottom of chart", group=G_PRESS)
+bool  i_showPressure  = input.bool(false, "Show pressure line at bottom of chart", group=G_PRESS)
 int   i_pressLookback = input.int(20,     "Pressure lookback bars", minval=1, maxval=200, group=G_PRESS)
 bool  i_pressWeighted = input.bool(false, "Body/range weighted",                group=G_PRESS,
      tooltip="Off = classic up-volume vs down-volume. On = volume weighted by candle body/range ratio.")
-
-string G_FIN = "════ Quarterly Financials ════"
-bool   i_showValTbl = input.bool(true,    "Show Valuation table",     group=G_FIN)
-bool   i_showFinTbl = input.bool(true,    "Show Financials table",    group=G_FIN)
-bool   i_miniMode  = input.bool(false,    "Mini Mode",          group=G_FIN, tooltip="Show traffic-light dots instead of values.")
-int    i_dataSize  = input.int(4,         "Quarters to show",   group=G_FIN, minval=1, maxval=12) + 5
-string i_tblSize   = input.string("small","Table Size",         group=G_FIN, options=["tiny","small","normal","large","huge","auto"], inline="tbl")
-string i_tblPosY   = input.string("bottom","↕",                 group=G_FIN, options=["top","middle","bottom"],                       inline="tbl")
-string i_tblPosX   = input.string("right", "↔",                 group=G_FIN, options=["left","center","right"],                       inline="tbl")
-string i_finPer    = input.string("FQ",   "Period",             group=G_FIN, options=["FQ","FY"], tooltip="FQ = quarterly, FY = annual.")
-string i_topLeft   = input.string("FF",   "Top-left cell",      group=G_FIN, options=["FF","Mcap"], tooltip="Free Float (FF) or Market Cap.")
 
 // ═══════════════════════════════════════════════════════════════
 //  REAL CVD — identical intrabar logic to CVD.pine
@@ -150,13 +130,6 @@ float ema10  = ta.ema(close, 10)
 float ema20  = ta.ema(close, 20)
 float ema50  = ta.ema(close, 50)
 float ema200 = ta.ema(close, 200)
-
-// Support touch: candle low dipped below the EMA but closed back above it
-bool ema10SupportTouch  = low < ema10  and close > ema10
-bool ema20SupportTouch  = low < ema20  and close > ema20
-
-int ema10SupportCount = int(math.sum(ema10SupportTouch ? 1.0 : 0.0, i_emaSupportLookback))
-int ema20SupportCount = int(math.sum(ema20SupportTouch ? 1.0 : 0.0, i_emaSupportLookback))
 
 // ═══════════════════════════════════════════════════════════════
 //  ANCHORED VWAP
@@ -267,259 +240,6 @@ bool formingBase  = bbwNarrow and nearHigh
 bool breakingOut  = close > ta.highest(close, i_lookback)[1]
 // Blue dot fires when RS Line hits a 52-week high AND stock is basing or breaking out
 bool rsBlueDotCond = rsLineNewHigh and (formingBase or breakingOut)
-
-// ═══════════════════════════════════════════════════════════════
-//  QUARTERLY FINANCIALS TABLE
-// ═══════════════════════════════════════════════════════════════
-
-color _frameCol = i_darkMode ? color.new(#999999, 50)           : color.rgb(241, 241, 241)
-color _textClr  = i_darkMode ? color.new(color.white, 0)        : color.new(color.black, 0)
-color _bgClr    = i_darkMode ? color.new(color.white, 100)      : color.new(#f0f0f0, 0)
-color _hdClr    = i_darkMode ? color.new(#444444, 0)            : color.new(#d0d0d0, 0)
-color _upClr    = i_darkMode ? color.new(color.lime, 0)         : color.new(color.rgb(31, 12, 239, 16), 0)
-color _dnClr    = i_darkMode ? color.new(color.red, 0)          : color.new(color.rgb(213, 27, 182), 10)
-color _flatClr  = i_darkMode ? color.new(color.yellow, 0)       : color.new(color.orange, 30)
-
-string _EPS_ID  = "EARNINGS_PER_SHARE_DILUTED"
-string _REV_ID  = "TOTAL_REVENUE"
-string _NI_ID   = "NET_INCOME"
-string _OI_ID   = "OPER_INCOME"
-string _OCF_ID  = "CASH_F_OPERATING_ACTIVITIES"
-string _CAPEX_ID = "CAPITAL_EXPENDITURES"
-
-_getFinancial(_id, _per) =>
-    float _val = request.financial(syminfo.tickerid, _id, _per, barmerge.gaps_on, ignore_invalid_symbol=true)
-    if _id == _REV_ID
-        _val := math.round(_val / 10.0, 2)
-    _val
-
-_pushArray(arr, val) =>
-    array.unshift(arr, val)
-    array.pop(arr)
-
-float _revRef = request.financial(syminfo.tickerid, _REV_ID, i_finPer, barmerge.gaps_on, ignore_invalid_symbol=true)
-
-var array<int>   _dates   = array.new_int(i_dataSize)
-var array<float> _epsArr  = array.new_float(i_dataSize)
-var array<float> _revArr  = array.new_float(i_dataSize)
-var array<float> _niArr   = array.new_float(i_dataSize)
-var array<float> _oiArr   = array.new_float(i_dataSize)
-
-if not na(_revRef)
-    _pushArray(_dates,  time)
-    _pushArray(_epsArr, _getFinancial(_EPS_ID, i_finPer))
-    _pushArray(_revArr, _getFinancial(_REV_ID, i_finPer))
-    _pushArray(_niArr,  _getFinancial(_NI_ID,  i_finPer))
-    _pushArray(_oiArr,  _getFinancial(_OI_ID,  i_finPer))
-
-// Free Float
-float _ff_raw   = nz(request.financial(syminfo.tickerid, "FLOAT_SHARES_OUTSTANDING", "FY"))
-float _ff       = na(ta.vwap) ? _ff_raw / 10000000 : _ff_raw * ta.vwap / 10000000
-string _ff_str  = na(_ff) or nz(_ff) == 0 ? "" : str.tostring(math.round(_ff)) + " Cr"
-
-// Market Cap
-float _mc_raw   = request.financial(syminfo.tickerid, "TOTAL_SHARES_OUTSTANDING", "FQ")
-float _mc       = _mc_raw * close / 10000000
-string _mc_str  = na(_mc) or nz(_mc) == 0 ? "" : str.tostring(math.round(_mc, 0)) + " Cr"
-
-// Equity Capital (paid-up share capital)
-float _ec_raw   = request.financial(syminfo.tickerid, "COMMON_STOCK_PAR", "FQ", ignore_invalid_symbol=true)
-float _ec       = na(_ec_raw) ? na : _ec_raw / 10000000
-
-// Valuation ratios — computed from raw financials (pre-computed ratio IDs unavailable for NSE)
-float _bvps     = request.financial(syminfo.tickerid, "BOOK_VALUE_PER_SHARE", "FQ", ignore_invalid_symbol=true)
-float _pb       = na(_bvps) or _bvps == 0 ? na : close / _bvps
-
-float _peg_fy   = request.financial(syminfo.tickerid, "PEG_RATIO", "FY", ignore_invalid_symbol=true)
-float _peg_fq   = request.financial(syminfo.tickerid, "PEG_RATIO", "FQ", ignore_invalid_symbol=true)
-float _peg      = na(_peg_fq) ? _peg_fy : _peg_fq
-
-// ROE = Net Income (TTM) / Total Equity (latest quarter)
-float _ni_ttm     = request.financial(syminfo.tickerid, _NI_ID, "TTM", ignore_invalid_symbol=true)
-float _totEquity  = request.financial(syminfo.tickerid, "TOTAL_EQUITY", "FQ", ignore_invalid_symbol=true)
-float _roe        = na(_ni_ttm) or na(_totEquity) or _totEquity == 0 ? na : _ni_ttm / _totEquity * 100
-
-// ROCE = EBIT (TTM) / Capital Employed (Total Assets − Current Liabilities, latest quarter)
-float _ebit_ttm   = request.financial(syminfo.tickerid, "PRETAX_INCOME", "TTM", ignore_invalid_symbol=true)
-float _totAssets  = request.financial(syminfo.tickerid, "TOTAL_ASSETS", "FQ", ignore_invalid_symbol=true)
-float _curLiab    = request.financial(syminfo.tickerid, "TOTAL_CURRENT_LIABILITIES", "FQ", ignore_invalid_symbol=true)
-float _capEmployed = na(_totAssets) or na(_curLiab) ? na : _totAssets - _curLiab
-float _roce       = na(_ebit_ttm) or na(_capEmployed) or _capEmployed == 0 ? na : _ebit_ttm / _capEmployed * 100
-
-float _epsTtm   = request.financial(syminfo.tickerid, _EPS_ID, "TTM", ignore_invalid_symbol=true)
-float _pe       = na(_epsTtm) or _epsTtm == 0 ? na : close / _epsTtm
-
-// FCF (TTM) = Operating Cash Flow + CapEx (CapEx reported as a negative outflow).
-// NSE companies file cash flow statements annually only, so TTM (built from quarterly
-// data) is unavailable here — fall back to the latest full-year figure.
-float _ocf_ttm   = request.financial(syminfo.tickerid, _OCF_ID,   "TTM", ignore_invalid_symbol=true)
-float _capex_ttm = request.financial(syminfo.tickerid, _CAPEX_ID, "TTM", ignore_invalid_symbol=true)
-float _ocf_fy    = request.financial(syminfo.tickerid, _OCF_ID,   "FY", barmerge.gaps_off, ignore_invalid_symbol=true)
-float _capex_fy  = request.financial(syminfo.tickerid, _CAPEX_ID, "FY", barmerge.gaps_off, ignore_invalid_symbol=true)
-float _ocf       = na(_ocf_ttm)   ? _ocf_fy   : _ocf_ttm
-float _capex     = na(_capex_ttm) ? _capex_fy : _capex_ttm
-float _fcf       = na(_ocf) or na(_capex) ? na : math.round((_ocf + _capex) / 10000000.0, 2)
-
-string _topLeftVal = i_topLeft == "FF" ? _ff_str : _mc_str
-
-_ftHead(_t, _col, _row, _txt) =>
-    table.cell(_t, _col, _row, _txt, bgcolor=_hdClr, text_color=_textClr, text_size=i_tblSize)
-
-_ftDate(_t, _col, _row, _txt) =>
-    string _v = str.contains(_txt, "70") ? "" : _txt
-    table.cell(_t, _col, _row, _v, bgcolor=_bgClr, text_color=_textClr, text_size=i_tblSize, text_halign=text.align_left)
-
-_ftVal(_isEps, _t, _col, _row, _arr, _i) =>
-    float _raw = array.get(_arr, _i)
-    float _val = _isEps ? _raw / 1 : _raw / 1
-    string _fmt = _isEps ? "#.##" : "#,###.##"
-    string _txt = na(_val) ? "" : str.tostring(_val, _fmt)
-    color  _clr = na(_val) ? _textClr : _val < 0 ? _dnClr : _val > 0 ? _upClr : _flatClr
-    table.cell(_t, _col, _row, _txt, text_color=_clr, text_size=i_tblSize)
-
-_ftPe(_t, _col, _row, _epsArr, _i, _annualize) =>
-    float _eps    = array.get(_epsArr, _i)
-    float _annEps = _annualize ? _eps * 4 : _eps
-    float _val    = na(_annEps) or _annEps == 0 ? na : close / _annEps
-    string _txt   = na(_val) ? "" : str.tostring(_val, "#.##") + "x"
-    color  _clr   = na(_val) ? _textClr : _val < 0 ? _dnClr : _textClr
-    table.cell(_t, _col, _row, _txt, text_color=_clr, text_size=i_tblSize)
-
-_ftYoY(_t, _col, _row, _arr, _i, _cmpr) =>
-    float _v1 = array.get(_arr, _i)
-    float _v2 = array.get(_arr, _i + _cmpr)
-    _v1 := _v1 == 0 ? 1 : _v1
-    _v2 := math.round(_v2, 1) == 0 ? 0.1 : _v2
-    float _dif = math.round((_v1 - _v2) / math.abs(_v2) * 100)
-    string _sym = na(_dif) ? "" : _dif > 0 ? "+" + str.tostring(_dif) + "%" : str.tostring(_dif) + "%"
-    color  _clr = na(_dif) ? _frameCol : _dif > 0 ? _upClr : _dif < 0 ? _dnClr : _flatClr
-    string _txt = na(_dif) ? "●" : i_miniMode ? "●" : _sym
-    table.cell(_t, _col, _row, _txt, text_halign=text.align_right, text_color=_clr, text_size=i_tblSize)
-
-_ftOmQoQ(_t, _col, _row, _oiArr, _revArr, _i) =>
-    float _oi1  = array.get(_oiArr, _i)
-    float _oi2  = array.get(_oiArr, _i + 1)
-    float _rev1 = array.get(_revArr, _i) * 10
-    float _rev2 = array.get(_revArr, _i + 1) * 10
-    float _om1  = _rev1 == 0 ? na : _oi1 / _rev1 * 100
-    float _om2  = _rev2 == 0 ? na : _oi2 / _rev2 * 100
-    float _dif  = na(_om1) or na(_om2) ? na : math.round(_om1 - _om2, 1)
-    string _sym = na(_dif) ? "" : _dif > 0 ? "+" + str.tostring(_dif) + "pp" : str.tostring(_dif) + "pp"
-    color  _clr = na(_dif) ? _frameCol : _dif > 0 ? _upClr : _dif < 0 ? _dnClr : _flatClr
-    string _txt = na(_dif) ? "●" : i_miniMode ? "●" : _sym
-    table.cell(_t, _col, _row, _txt, text_halign=text.align_right, text_color=_clr, text_size=i_tblSize)
-
-// Valuation metrics table (positioned at top-right)
-var table _valTbl = table.new("top_right", columns=2, rows=13,
-     bgcolor=_bgClr, frame_color=_frameCol, frame_width=1, border_color=_frameCol, border_width=1)
-
-// Quarterly financials table
-int _colCount = i_dataSize - 4
-var table _finTbl = table.new(i_tblPosY + "_" + i_tblPosX, columns=_colCount + 1, rows=10,
-     bgcolor=_bgClr, frame_color=_frameCol, frame_width=1, border_color=_frameCol, border_width=1)
-
-if barstate.islast
-    // ─── Valuation Metrics Table ───
-    if i_showValTbl
-        string _mcFmt = na(_mc) or nz(_mc) == 0 ? "N/A" : "₹" + str.tostring(math.round(_mc, 0), "#,###") + " Cr"
-        string _pegFmt = na(_peg) ? "N/A" : str.tostring(math.round(_peg, 2))
-        string _pbFmt  = na(_pb)  ? "N/A" : str.tostring(math.round(_pb, 2)) + "x"
-        string _peFmt  = na(_pe)  ? "N/A" : str.tostring(math.round(_pe, 2)) + "x"
-        string _fcfFmt = na(_fcf) ? "N/A" : str.tostring(math.round(_fcf), "#,###")
-        color  _fcfClr = na(_fcf) ? _textClr : _fcf < 0 ? _dnClr : _fcf > 0 ? _upClr : _flatClr
-        string _ecFmt  = na(_ec) ? "N/A" : str.tostring(math.round(_ec, 2), "#,###.##") + " Cr"
-        string _roeFmt = na(_roe)  ? "N/A" : str.tostring(math.round(_roe, 2)) + "%"
-        color  _roeClr = na(_roe)  ? _textClr : _roe < 0 ? _dnClr : _upClr
-        string _roceFmt = na(_roce) ? "N/A" : str.tostring(math.round(_roce, 2)) + "%"
-        color  _roceClr = na(_roce) ? _textClr : _roce < 0 ? _dnClr : _upClr
-
-        _ftHead(_valTbl, 0, 0, "Metric")
-        _ftHead(_valTbl, 1, 0, "Value")
-
-        _ftHead(_valTbl, 0, 1, "Mkt Cap")
-        table.cell(_valTbl, 1, 1, _mcFmt, bgcolor=_bgClr, text_color=_textClr, text_size=i_tblSize)
-
-        _ftHead(_valTbl, 0, 2, "Equity Cap")
-        table.cell(_valTbl, 1, 2, _ecFmt, bgcolor=_bgClr, text_color=_textClr, text_size=i_tblSize)
-
-        _ftHead(_valTbl, 0, 3, "FCF(cr)")
-        table.cell(_valTbl, 1, 3, _fcfFmt, bgcolor=_bgClr, text_color=_fcfClr, text_size=i_tblSize)
-
-        _ftHead(_valTbl, 0, 4, "P/E")
-        table.cell(_valTbl, 1, 4, _peFmt, bgcolor=_bgClr, text_color=_textClr, text_size=i_tblSize)
-
-        _ftHead(_valTbl, 0, 5, "PEG")
-        table.cell(_valTbl, 1, 5, _pegFmt, bgcolor=_bgClr, text_color=_textClr, text_size=i_tblSize)
-
-        _ftHead(_valTbl, 0, 6, "P/B")
-        table.cell(_valTbl, 1, 6, _pbFmt, bgcolor=_bgClr, text_color=_textClr, text_size=i_tblSize)
-
-        _ftHead(_valTbl, 0, 7, "ROE")
-        table.cell(_valTbl, 1, 7, _roeFmt, bgcolor=_bgClr, text_color=_roeClr, text_size=i_tblSize)
-
-        _ftHead(_valTbl, 0, 8, "ROCE")
-        table.cell(_valTbl, 1, 8, _roceFmt, bgcolor=_bgClr, text_color=_roceClr, text_size=i_tblSize)
-
-        _ftHead(_valTbl, 0, 9, "Listed")
-        string _listFmt = na(firstYear) ? "N/A" : str.tostring(firstYear)
-        table.cell(_valTbl, 1, 9, _listFmt, bgcolor=_bgClr, text_color=_textClr, text_size=i_tblSize)
-
-        _ftHead(_valTbl, 0, 10, "Sector")
-        string _sectorVal = na(syminfo.sector) ? "N/A" : syminfo.sector
-        table.cell(_valTbl, 1, 10, _sectorVal, bgcolor=_bgClr, text_color=_textClr, text_size=i_tblSize)
-
-        _ftHead(_valTbl, 0, 11, "Industry")
-        string _industryVal = na(syminfo.industry) ? "N/A" : syminfo.industry
-        table.cell(_valTbl, 1, 11, _industryVal, bgcolor=_bgClr, text_color=_textClr, text_size=i_tblSize)
-
-        _ftHead(_valTbl, 0, 12, "10:20 EMA")
-        string _ema1020Fmt = ema20SupportCount == 0 ? "N/A" : str.tostring(math.round(ema10SupportCount / ema20SupportCount * 100)) + "%"
-        table.cell(_valTbl, 1, 12, _ema1020Fmt, bgcolor=_bgClr, text_color=_textClr, text_size=i_tblSize)
-
-    // ─── Quarterly Financials Table ───
-    if i_showFinTbl
-        // Row 2: Quarter dates header
-        _ftHead(_finTbl, 0, 2, "Qtr")
-        for col = 0 to _colCount - 1
-            string _dateStr = str.format("{0, date, MMM-yy}", array.get(_dates, col))
-            _ftDate(_finTbl, col + 1, 2, _dateStr)
-
-        // Row 3: EPS
-        _ftHead(_finTbl, 0, 3, "EPS")
-        for col = 0 to _colCount - 1
-            _ftVal(true, _finTbl, col + 1, 3, _epsArr, col)
-
-        // Row 4: P/E (current price ÷ annualized EPS for the period)
-        _ftHead(_finTbl, 0, 4, "P/E")
-        for col = 0 to _colCount - 1
-            _ftPe(_finTbl, col + 1, 4, _epsArr, col, i_finPer != "FY")
-
-        // Row 5: %EPS or YoY
-        string _epsLbl = i_finPer == "FY" ? "YoY" : "%EPS"
-        _ftHead(_finTbl, 0, 5, _epsLbl)
-        for col = 0 to _colCount - 1
-            _ftYoY(_finTbl, col + 1, 5, _epsArr, col, i_finPer == "FY" ? 1 : 4)
-
-        // Row 6: %Sales or Sales YoY
-        string _salesLbl = i_finPer == "FY" ? "Sales YoY" : "%Sls"
-        _ftHead(_finTbl, 0, 6, _salesLbl)
-        for col = 0 to _colCount - 1
-            _ftYoY(_finTbl, col + 1, 6, _revArr, col, i_finPer == "FY" ? 1 : 4)
-
-        // Row 7: %NI
-        _ftHead(_finTbl, 0, 7, "%NI")
-        for col = 0 to _colCount - 1
-            _ftYoY(_finTbl, col + 1, 7, _niArr, col, 1)
-
-        // Row 8: %OI
-        _ftHead(_finTbl, 0, 8, "%OI")
-        for col = 0 to _colCount - 1
-            _ftYoY(_finTbl, col + 1, 8, _oiArr, col, 1)
-
-        // Row 9: %OM
-        _ftHead(_finTbl, 0, 9, "%OM")
-        for col = 0 to _colCount - 1
-            _ftOmQoQ(_finTbl, col + 1, 9, _oiArr, _revArr, col)
 
 // ═══════════════════════════════════════════════════════════════
 //  VISUALS
