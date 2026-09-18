@@ -1,0 +1,204 @@
+//@version=5
+indicator("Option selling", overlay=true, max_lines_count=500)
+
+// F/R candle data always comes from real 5-minute candles (via request.security),
+// so the levels stay identical no matter what timeframe the chart is displaying —
+// as long as the chart timeframe is 5 minutes or lower (finer).
+if timeframe.in_seconds() > timeframe.in_seconds("5")
+    runtime.error("Apply this indicator on a 5-minute or lower (finer) chart timeframe.")
+
+// ————— Settings —————
+grpF = "First Candle (F) Fibonacci"
+showF      = input.bool(false, "Show F Levels",        group = grpF)
+colF0      = input.color(color.gray,   "F 0 / 1 Line Color",   group = grpF)
+colF44     = input.color(color.orange, "F 0.44 Line Color",    group = grpF)
+colF50     = input.color(color.blue,   "F 0.5 Line Color",     group = grpF)
+colF56     = input.color(color.orange, "F 0.56 Line Color",    group = grpF)
+showFBg    = input.bool(true, "Show F Band (0.44-0.56)", group = grpF)
+colFBg     = input.color(color.new(color.gray, 80), "F Band Color", group = grpF)
+
+grpR = "First Red Candle (R) Fibonacci"
+showR      = input.bool(false, "Show R Levels",        group = grpR)
+colR0      = input.color(color.gray,   "R 0 / 1 Line Color",   group = grpR)
+colR44     = input.color(color.purple, "R 0.44 Line Color",    group = grpR)
+colR50     = input.color(color.teal,   "R 0.5 Line Color",     group = grpR)
+colR56     = input.color(color.purple, "R 0.56 Line Color",    group = grpR)
+showRBg    = input.bool(true, "Show R Band (0.44-0.56)", group = grpR)
+colRBg     = input.color(color.new(color.red, 80), "R Band Color", group = grpR)
+
+grpLevels = "Fibonacci Levels"
+fib0   = input.float(0.0,  "Level 0",    step = 0.01, group = grpLevels)
+fib44  = input.float(0.44, "Level 0.44", step = 0.01, group = grpLevels)
+fib50  = input.float(0.5,  "Level 0.5",  step = 0.01, group = grpLevels)
+fib56  = input.float(0.56, "Level 0.56", step = 0.01, group = grpLevels)
+fib100 = input.float(1.0,  "Level 1",    step = 0.01, group = grpLevels)
+
+grpHist = "History"
+pastDays = input.int(1, "Construct For Past N Days", minval = 1, maxval = 50, group = grpHist)
+
+// Solid, thinnest line for every drawn line
+lineStyleConst = line.style_solid
+lineWidthThin  = 1
+
+// ————— 5-minute candle data (independent of chart timeframe) —————
+// Pulling OHLC from the fixed "5" timeframe means F/R are always derived from
+// real 5-minute candles, so the markings don't change if the chart is viewed
+// on a lower (finer) timeframe such as 1 or 3 minutes.
+[t5, o5, h5, l5, c5] = request.security(syminfo.tickerid, "5", [time, open, high, low, close], lookahead = barmerge.lookahead_off)
+
+// ————— Session / candle tracking —————
+var int   dayCandleIndex = 0
+var float fHigh = na
+var float fLow  = na
+var float rHigh = na
+var float rLow  = na
+var int   fStartBar = na
+var int   rStartBar = na
+var bool  rFoundToday = false
+var bool  rDrawArmed = false
+var int   prevT5 = na
+
+// Lines belonging to the current (still-open) day, extended bar-by-bar
+// and frozen (stop tracking) once the day changes.
+var line[] fLinesActive = array.new<line>()
+var line[] rLinesActive = array.new<line>()
+
+newDay = ta.change(time("D")) != 0
+// A new 5-min candle has closed/started once its request.security timestamp changes.
+new5Candle = t5 != prevT5
+prevT5 := t5
+
+if newDay
+    dayCandleIndex := 0
+    fHigh := na
+    fLow  := na
+    rHigh := na
+    rLow  := na
+    rFoundToday := false
+    rDrawArmed := false
+    array.clear(fLinesActive)
+    array.clear(rLinesActive)
+
+if new5Candle
+    dayCandleIndex := newDay ? 1 : dayCandleIndex + 1
+
+isFirstCandle  = new5Candle and dayCandleIndex == 1
+isSecondCandle = new5Candle and dayCandleIndex == 2
+isRedCandle    = c5 < o5
+
+if isFirstCandle
+    fHigh := h5
+    fLow  := l5
+    fStartBar := bar_index
+
+// R = first red candle of the day, but the day's very first candle never
+// qualifies (even if red) — scan from the second candle onward.
+rJustFound = new5Candle and not isFirstCandle and not rFoundToday and isRedCandle
+if rJustFound
+    rHigh := h5
+    rLow  := l5
+    rStartBar := bar_index
+    rFoundToday := true
+    rDrawArmed := true
+
+// rDrawArmed stays true (across every chart bar of the red 5-min candle) until
+// the following 5-min candle opens, at which point it fires the draw exactly
+// once — regardless of how many chart bars (e.g. 1-min bars) make up either
+// candle — then disarms itself.
+rPendingDraw = new5Candle and rDrawArmed and not rJustFound
+if rPendingDraw
+    rDrawArmed := false
+
+// ————— Rolling queues of drawn fib sets (oldest evicted once beyond pastDays) —————
+var line[]      fLinesQueue = array.new<line>()
+var linefill[]  fFillsQueue = array.new<linefill>()
+var int[]       fSetSizes   = array.new<int>()   // lines-per-set, to pop the oldest whole set
+var int[]       fFillSizes  = array.new<int>()
+
+var line[]      rLinesQueue = array.new<line>()
+var linefill[]  rFillsQueue = array.new<linefill>()
+var int[]       rSetSizes   = array.new<int>()
+var int[]       rFillSizes  = array.new<int>()
+
+popOldestSet(linesQ, setSizes, fillsQ, fillSizes) =>
+    if array.size(setSizes) > 0
+        n = array.shift(setSizes)
+        for i = 1 to n
+            line.delete(array.shift(linesQ))
+    if array.size(fillSizes) > 0
+        m = array.shift(fillSizes)
+        for i = 1 to m
+            linefill.delete(array.shift(fillsQ))
+
+drawFibSet(baseHigh, baseLow, startBar, col0, col44, col50, col56, showLines, showBg, colBg) =>
+    lns = array.new<line>()
+    fls = array.new<linefill>()
+    rng = baseHigh - baseLow
+
+    price0   = baseLow + rng * fib0
+    price44  = baseLow + rng * fib44
+    price50  = baseLow + rng * fib50
+    price56  = baseLow + rng * fib56
+    price100 = baseLow + rng * fib100
+
+    // 0.44 / 0.56 lines are always created (needed as band edges), hidden when showLines is off
+    invisible = color.new(color.white, 100)
+    l44  = line.new(startBar, price44,  bar_index, price44,  xloc.bar_index, extend.none, showLines ? col44 : invisible, lineStyleConst, lineWidthThin)
+    l56  = line.new(startBar, price56,  bar_index, price56,  xloc.bar_index, extend.none, showLines ? col56 : invisible, lineStyleConst, lineWidthThin)
+    array.push(lns, l44)
+    array.push(lns, l56)
+
+    if showLines
+        l0   = line.new(startBar, price0,   bar_index, price0,   xloc.bar_index, extend.none, col0, lineStyleConst, lineWidthThin)
+        l50  = line.new(startBar, price50,  bar_index, price50,  xloc.bar_index, extend.none, col50, lineStyleConst, lineWidthThin)
+        l100 = line.new(startBar, price100, bar_index, price100, xloc.bar_index, extend.none, col0, lineStyleConst, lineWidthThin)
+        array.push(lns, l0)
+        array.push(lns, l50)
+        array.push(lns, l100)
+
+    if showBg
+        fillBand = linefill.new(l44, l56, colBg)
+        array.push(fls, fillBand)
+
+    [lns, fls]
+
+// Draw F levels once F candle completes (i.e., on second candle bar)
+if isSecondCandle and not na(fHigh) and not na(fLow) and (showF or showFBg)
+    [lns, fls] = drawFibSet(fHigh, fLow, fStartBar, colF0, colF44, colF50, colF56, showF, showFBg, colFBg)
+    array.clear(fLinesActive)
+    for l in lns
+        array.push(fLinesQueue, l)
+        array.push(fLinesActive, l)
+    array.push(fSetSizes, array.size(lns))
+    for f in fls
+        array.push(fFillsQueue, f)
+    array.push(fFillSizes, array.size(fls))
+
+    if array.size(fSetSizes) > pastDays
+        popOldestSet(fLinesQueue, fSetSizes, fFillsQueue, fFillSizes)
+
+// Draw R levels once the red 5-min candle completes (i.e., when the next 5-min candle opens)
+if rPendingDraw and not na(rHigh) and not na(rLow) and (showR or showRBg)
+    [lns, fls] = drawFibSet(rHigh, rLow, rStartBar, colR0, colR44, colR50, colR56, showR, showRBg, colRBg)
+    array.clear(rLinesActive)
+    for l in lns
+        array.push(rLinesQueue, l)
+        array.push(rLinesActive, l)
+    array.push(rSetSizes, array.size(lns))
+    for f in fls
+        array.push(rFillsQueue, f)
+    array.push(rFillSizes, array.size(fls))
+
+    if array.size(rSetSizes) > pastDays
+        popOldestSet(rLinesQueue, rSetSizes, rFillsQueue, rFillSizes)
+
+// Keep today's active lines' right edge pinned to the current bar so they
+// grow through the session but stop (freeze) once the day ends — no bleed
+// into the next session like extend.right would cause.
+if array.size(fLinesActive) > 0
+    for l in fLinesActive
+        line.set_x2(l, bar_index)
+
+if array.size(rLinesActive) > 0
+    for l in rLinesActive
+        line.set_x2(l, bar_index)

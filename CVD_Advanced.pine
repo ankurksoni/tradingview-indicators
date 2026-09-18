@@ -1,0 +1,327 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © KioseffTrading
+
+//@version=6
+indicator("Over- Sold/Bought Cost", overlay = true, max_labels_count = 500, max_lines_count = 500, max_polylines_count = 100, max_boxes_count = 500, calc_bars_count = 5000)
+
+import Trading-IQ/ICTlibrary/4 as IQ 
+
+ltfInput = input.timeframe("1", title = "Lower Timeframe To Calculate CVD", group = "Main Settings")
+useCVDclose = input.bool(defval = false, title = "Use CVD Close For Divergences", group = "Main Settings")
+usePriceclose = input.bool(defval = false, title = "Use Price Close For Divergences", group = "Main Settings")
+showExpectedClose = input.bool(defval = true, title = "Show Delta-Implied Close Price", group = "Main Settings")
+
+highCostRank = input.float(90, title = "High Cost Rank (Higher = Stricter)", group = "Cost Settings")
+costDivLen   = input.int(defval = 2, title = "Cost Structure Length (Higher = Bigger Swings)", group = "Cost Settings")
+
+
+type pointData
+
+    array<float>       cvdVals
+    array<chart.point> costData
+    array<chart.point> costDataPrice
+
+type barData
+
+    float H = high
+    float L = low
+    int   T = time
+    float cvd
+    float cvdH
+    float cvdL
+
+type CVDintra
+
+    float maxCVDintra
+    float minCVDintra 
+
+type sideAgg 
+
+    array<float> upAgg 
+    array<float> dnAgg
+
+var finalLTF = timeframe.from_seconds(math.min(timeframe.in_seconds(ltfInput), timeframe.in_seconds("")))
+var barDataArr = array.new<barData>()
+var masterTime = array.new<int>()
+masterTime.push(time)
+
+if barstate.isfirst
+
+    if timeframe.isticks or finalLTF == "0D" or na(finalLTF)
+        finalLTF := ltfInput
+
+direction() => 
+
+    direction = if finalLTF == "1T" 
+
+        switch 
+
+            close == bid => -1 
+            close == ask =>  1
+            =>               math.sign(close - close[1]) 
+        
+    else 
+
+        math.sign(close - close[1])
+
+method updatePivot(array<chart.point> id, bool isContinuation, float pricePoint) => 
+
+    getRec = id.first(), getP = id.last()
+
+    switch isContinuation
+
+        true => id.set(1, chart.point.from_time(getRec.time, getP.price))  , id.set(0, chart.point.from_time(time, pricePoint))
+        =>      id.set(1, chart.point.from_time(getRec.time, getRec.price)), id.set(0, chart.point.from_time(time, pricePoint))
+
+    id.first()
+
+IQZZsimple(float volatilityMultiplier, float seriesHigh, float seriesLow, simple bool useAverageChange, bool use) =>
+    
+    atr = switch useAverageChange 
+
+        false => ta.atr(14) * volatilityMultiplier
+        =>       ta.sma(math.abs(math.max(seriesHigh, seriesHigh[1]) - math.min(seriesLow, seriesLow[1])), 14) * volatilityMultiplier
+
+
+    var points   = array.from(chart.point.from_time(time, nz(seriesHigh)), chart.point.from_time(time, nz(seriesHigh)))
+    pointPrev    = points.last(), pointP2  = pointPrev[1]
+
+    var pointArr = array.new<float>()
+    var timeArr  = array.new<int>  ()
+    var dir      = 0
+
+    getRec = points.first()
+
+    if use
+
+        if dir == 1
+
+            price = math.max(getRec.price, seriesHigh)
+
+            if price == seriesHigh
+                getRec := points.updatePivot(true, seriesHigh)
+                
+            if seriesLow <= getRec.price - atr  and seriesHigh != getRec.price
+
+                dir   := -1 
+                points.updatePivot(false, seriesLow)
+
+        else if dir == -1
+
+            price = math.min(seriesLow, getRec.price)
+
+            if price == seriesLow
+                getRec := points.updatePivot(true, seriesLow)
+
+            if seriesHigh >= getRec.price + atr and seriesLow != getRec.price
+
+                dir   := 1
+                points.updatePivot(false, seriesHigh)
+
+        if dir == 0 
+
+            if seriesHigh >= getRec.price + atr 
+
+                dir   := 1
+                points.updatePivot(false, seriesHigh)
+
+            else if seriesLow <= getRec.price - atr
+
+                dir   := -1 
+                points.updatePivot(false, seriesLow)
+
+        if dir != dir[1]
+            
+            pointArr.push(getRec.price)
+            timeArr .push(getRec.time)
+        
+
+    [dir, pointArr, timeArr, points.first().price]
+
+method collectPoints(array<chart.point> id, array<int> timeArr, array<float> pointArr, int direction) =>
+
+    change = ta.change(direction)
+
+    if not na(id)
+
+        if id.size() > 9000 
+
+            id.shift()
+
+        if change != 0 and timeArr.size() > 0
+
+            id.push(chart.point.from_time(timeArr.last(), pointArr.last()))
+
+
+cvdCost(float currentCVD, array<chart.point> pricePoints, array<chart.point> cvdPoints, int directionPrice, float recPrice) =>
+
+    var cvdCost    = array.new<float>()
+
+    ticksRangeNow  = float(na)
+    flowPerTickNow = float(na)
+
+    if not na(pricePoints)
+
+        if pricePoints.size() > 3 and cvdPoints.size() > 3
+
+            getLastPointCVD = cvdPoints.get(-1), getLastPointPrice = pricePoints.get(-1)
+
+            end        = pricePoints.get(-1)
+            cvdAtEnd   = barDataArr.get(masterTime.binary_search_rightmost(end.time)).cvd
+
+            deltaNow       = math.abs(barDataArr.last().cvd - cvdAtEnd)
+            ticksRangeNow  := math.abs(close - end.price) / syminfo.mintick
+            flowPerTickNow := deltaNow / ticksRangeNow
+
+            if directionPrice != directionPrice[1]
+
+                start = pricePoints.get(-2)
+
+                cvdAtStart = barDataArr.get(masterTime.binary_search_rightmost(start.time)).cvd
+
+                ticksRange = math.abs(start.price - end.price) / syminfo.mintick
+
+                delta       = math.abs(cvdAtEnd - cvdAtStart)
+                flowPerTick = delta / ticksRange
+
+                cvdCost.push(flowPerTick)
+
+            if cvdCost.size() > 50000
+                cvdCost.shift()
+
+    [cvdCost, ticksRangeNow, flowPerTickNow]
+
+cvdCalc() =>
+
+    var cvdData = pointData.new(array.new<float>(1, 0), array.new<chart.point>(), array.new<chart.point>())
+    
+    cvd         = request.security_lower_tf("", finalLTF, nz(volume * direction(), 0))
+
+    var sideAggressionDay = sideAgg.new(array.new<float>(), array.new<float>())
+    var sideAggressionAll = sideAgg.new(array.new<float>(), array.new<float>())
+
+    cvdIntraVals = CVDintra.new()
+
+    var dayOpen = open, var dayHigh = 0., var dayLow = 0.
+
+    if timeframe.change("1D")
+        sideAggressionDay.upAgg.clear()
+        sideAggressionDay.dnAgg.clear()
+        dayOpen := open
+        dayHigh := high 
+        dayLow := low 
+
+    dayHigh := math.max(high, dayHigh)
+    dayLow  := math.min(low, dayLow)
+
+    buyAggNow = 0., sellAggNow = 0.
+
+    for data in cvd
+
+        if cvdData.cvdVals.size() > 90000
+
+            cvdData.cvdVals.shift()
+
+        cvdData.cvdVals.push(cvdData.cvdVals.last() + nz(data))
+
+        absData = math.abs(data)
+
+        switch math.sign(data)
+
+            1  => buyAggNow  += absData
+            -1 => sellAggNow += absData
+
+        getLast = cvdData.cvdVals.last()
+
+        cvdIntraVals.maxCVDintra := math.max(nz(cvdIntraVals.maxCVDintra, -10e10), getLast)
+        cvdIntraVals.minCVDintra := math.min(nz(cvdIntraVals.minCVDintra, 10e10), getLast)
+
+    sideAggressionAll.upAgg.push(buyAggNow)
+    sideAggressionAll.dnAgg.push(sellAggNow)
+    sideAggressionDay.upAgg.push(buyAggNow)
+    sideAggressionDay.dnAgg.push(sellAggNow)
+
+    currentCVD = cvdData.cvdVals.last()
+
+    eps = 1e-10
+    barDelta = math.abs(buyAggNow - sellAggNow)
+    barMove  = math.abs(close - open)
+
+    equiv = barMove / (barDelta + eps)
+
+    var equivArr = array.new<float>()
+
+    if barDelta > 0 and barMove > 0
+        equivArr.push(equiv)
+
+    if equivArr.size() > 100
+        equivArr.shift()
+
+    med = equivArr.median()
+
+    dir = math.sign(close - open)
+    expectedMove = dir * med * barDelta
+    expectedClose = open + expectedMove
+
+    moveRatio = math.abs(close - open) / (math.abs(expectedMove) + eps)
+    [cvdH, cvdL] = switch useCVDclose
+
+        true => [currentCVD, currentCVD]
+        =>      [cvdIntraVals.maxCVDintra, cvdIntraVals.minCVDintra]
+
+    [priceH, priceL] = switch usePriceclose
+
+        true => [close, close]
+        =>      [high, low]
+
+    barDataArr.push(barData.new(cvd = currentCVD, cvdH = cvdH, cvdL = cvdL))
+
+    [directionCost, pointArrCost, timeArrCost, recSmaCost]                      = IQZZsimple(costDivLen, cvdH, cvdL, true, true)
+    [directionPriceCost, pointArrPriceCost, timeArrPriceCost, recSmaPriceCost]  = IQZZsimple(costDivLen, priceH, priceL, false, true)
+
+    cvdData.costData     .collectPoints(timeArrCost, pointArrCost, directionCost)
+    cvdData.costDataPrice.collectPoints(timeArrPriceCost, pointArrPriceCost, directionPriceCost)
+
+    [cvdCost, ticksRangeNow, flowPerTickNow] = cvdCost(currentCVD, cvdData.costDataPrice, cvdData.costData, directionPriceCost, recSmaPriceCost) 
+
+    totalAggNow    = buyAggNow + sellAggNow
+
+    var cost = array.new<float>()
+
+    ticksRange = math.abs(close - open) / syminfo.mintick
+
+    delta       = math.abs(currentCVD - currentCVD[1])
+    flowPerTick = delta / ticksRange
+
+    cost.push(flowPerTick)
+
+    if cost.size() > 50000
+        cost.shift()
+
+    [currentCVD, cvdIntraVals, ticksRangeNow, flowPerTickNow, directionPriceCost, cvdCost, expectedClose]
+
+[currentCVD, cvdIntraVals, ticksRangeNow, flowPerTickNow, directionPriceCost, cvdCost, expectedClose] = cvdCalc()
+
+gradCol = color(na)
+
+if not na(cvdCost)
+
+    gradCol := switch 
+
+        directionPriceCost == -1  => color.from_gradient(flowPerTickNow, cvdCost.min(), cvdCost.max(), color.new(color.rgb(255, 116, 116), 90), color.rgb(255, 116, 116))
+        directionPriceCost == 1   => color.from_gradient(flowPerTickNow, cvdCost.min(), cvdCost.max(), color.new(#55ffda, 90), #55ffda)
+
+plotcandle(open, high, low, not na(cvdCost) ? close : na, color = color(na), bordercolor = color(na), wickcolor = gradCol)
+
+isHighCost = not na(cvdCost) ? flowPerTickNow >= cvdCost.percentile_nearest_rank(highCostRank) : false
+
+plotshape(not na(cvdCost) ? isHighCost and directionPriceCost == 1 ? close : na : na, text = "▼", style = shape.arrowdown, location = location.abovebar, color = #00000000, textcolor = gradCol)
+plotshape(not na(cvdCost) ? isHighCost and directionPriceCost == -1 ? close : na : na, text = "▲", style = shape.arrowup, location = location.belowbar, color =  #00000000, textcolor = gradCol)
+
+
+expectedCloseCol = switch
+    expectedClose > open => #2196f3
+    expectedClose < open => #ff5252
+    =>                      color.gray
+
+plotbar(showExpectedClose ? expectedClose : na, expectedClose, expectedClose, expectedClose, color = expectedCloseCol)
