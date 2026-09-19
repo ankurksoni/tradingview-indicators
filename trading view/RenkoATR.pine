@@ -1,0 +1,97 @@
+//@version=6
+indicator("Renko ATR Stop (Hidden Renko)", overlay=true)
+
+// ───────────────────────────── Inputs ─────────────────────────────
+fixedTfInput     = input.timeframe("2", "Fixed Anchor Timeframe (drives Renko + ATR)", group="Renko Settings")
+
+brickModeInput   = input.string("Auto (ATR)", "Brick Size Mode", options=["Auto (ATR)", "Manual"], group="Renko Settings")
+manualBrickInput = input.float(10.0, "Manual Brick Size (points)", minval=0.0001, group="Renko Settings")
+atrLenBrickInput = input.int(14, "Auto Brick ATR Length", minval=1, group="Renko Settings")
+
+atrLenInput  = input.int(14, "ATR Length", minval=1, group="ATR Stop Loss")
+atrMultInput = input.float(3.0, "ATR Multiplier", minval=0.1, step=0.1, group="ATR Stop Loss")
+
+rsiLenInput      = input.int(14, "RSI Length", minval=1, group="RSI Filter")
+rsiBuyLevelInput = input.float(60.0, "RSI Buy Threshold (must be above)", minval=0.0, maxval=100.0, group="RSI Filter")
+rsiSellLevelInput = input.float(40.0, "RSI Sell Threshold (must be below)", minval=0.0, maxval=100.0, group="RSI Filter")
+
+adxLenInput      = input.int(14, "ADX/DI Length", minval=1, group="ADX Filter")
+adxDiLevelInput  = input.float(25.0, "DI Threshold (must be above)", minval=0.0, maxval=100.0, group="ADX Filter")
+
+showLabelsInput = input.bool(true, "Show Buy/Sell Triangles", group="Display")
+
+// ───────────────────────── Fixed-timeframe data feed ─────────────────────────
+// Every input to the Renko engine and the ATR stop is pulled from one fixed anchor
+// timeframe via request.security, so the brick sequence, brick size, and stop distance
+// all stay identical no matter what timeframe the chart itself is displaying.
+[fClose, brickAtr, stopAtr] = request.security(syminfo.tickerid, fixedTfInput,
+     [close, ta.atr(atrLenBrickInput), ta.atr(atrLenInput)],
+     lookahead=barmerge.lookahead_off)
+
+brickSize = brickModeInput == "Manual" ? manualBrickInput : brickAtr
+
+// ───────────────────────── Renko brick engine (in-memory only, not plotted) ─────────────────────────
+// State is carried in `var` floats/ints so it persists across bars and is driven purely by the
+// fixed-timeframe close, never by the chart's own bar time/timeframe.
+var float renkoClose   = na
+var int   renkoDir     = 0     // 1 = up brick series, -1 = down brick series
+var int   brickCount   = 0
+
+if na(renkoClose)
+    renkoClose := fClose
+    renkoDir   := 0
+
+// Determine how many bricks the current price move represents, then step the synthetic
+// Renko close forward brick-by-brick so gaps of any size still produce correct sequential bricks.
+newBrickFormed = false
+if not na(brickSize) and brickSize > 0
+    diff = fClose - renkoClose
+    bricksMoved = int(math.floor(math.abs(diff) / brickSize))
+    if bricksMoved > 0
+        dirNow = diff > 0 ? 1 : -1
+        // Reversal requires 2 bricks in the opposite direction (classic Renko reversal rule)
+        reversal = renkoDir != 0 and dirNow != renkoDir
+        neededBricks = reversal ? 2 : 1
+        if bricksMoved >= neededBricks or not reversal
+            stepsToApply = reversal ? (bricksMoved >= 2 ? bricksMoved : 0) : bricksMoved
+            if stepsToApply > 0
+                for i = 1 to stepsToApply
+                    renkoClose := renkoClose + dirNow * brickSize
+                renkoDir := dirNow
+                brickCount := brickCount + stepsToApply
+                newBrickFormed := true
+
+// ───────────────────────── ATR Trailing Stop on synthetic Renko series ─────────────────────────
+renkoSeries = renkoClose
+atr = stopAtr
+
+var float upTrail   = na
+var float downTrail = na
+var int   trend     = 1
+
+src = renkoSeries
+
+upTrail   := na(upTrail[1])   ? src - atrMultInput * atr : (src[1] > upTrail[1] ? math.max(upTrail[1], src - atrMultInput * atr) : src - atrMultInput * atr)
+downTrail := na(downTrail[1]) ? src + atrMultInput * atr : (src[1] < downTrail[1] ? math.min(downTrail[1], src + atrMultInput * atr) : src + atrMultInput * atr)
+
+trend := src > downTrail[1] ? 1 : src < upTrail[1] ? -1 : trend[1]
+
+atrStop = trend == 1 ? upTrail : downTrail
+atrBuySignal  = trend == 1 and trend[1] == -1
+atrSellSignal = trend == -1 and trend[1] == 1
+
+// ───────────────────────── RSI + ADX/DI filters ─────────────────────────
+rsiValue = ta.rsi(close, rsiLenInput)
+
+[diPlus, diMinus, _adx] = ta.dmi(adxLenInput, adxLenInput)
+
+buySignal  = atrBuySignal  and rsiValue > rsiBuyLevelInput  and diPlus  > adxDiLevelInput
+sellSignal = atrSellSignal and rsiValue < rsiSellLevelInput and diMinus > adxDiLevelInput
+
+// ───────────────────────── Plotting on the real candlestick chart ─────────────────────────
+atrStopPlot = plot(atrStop, "ATR Stop", color=trend == 1 ? color.new(color.green, 0) : color.new(color.red, 0), linewidth=2, style=plot.style_line)
+
+plotshape(showLabelsInput and buySignal  ? atrStop : na, title="Buy",  style=shape.triangleup,   location=location.absolute, color=color.green, size=size.small)
+plotshape(showLabelsInput and sellSignal ? atrStop : na, title="Sell", style=shape.triangledown, location=location.absolute, color=color.red,   size=size.small)
+
+// Renko bricks are intentionally NOT plotted — only kept in memory to drive the ATR stop above.
