@@ -1,97 +1,140 @@
+// strategy_archetype: supertrend_pullback
 //@version=6
-indicator("Renko ATR Stop (Hidden Renko)", overlay=true)
+indicator("Renko Supertrend + Smooth ATR Trail", overlay=true)
 
-// ───────────────────────────── Inputs ─────────────────────────────
-fixedTfInput     = input.timeframe("2", "Fixed Anchor Timeframe (drives Renko + ATR)", group="Renko Settings")
+useDynamicBrickSize = input.bool(true, "Use Dynamic ATR Brick Size")
+brickSize = input.float(20.95, "Renko Brick Size (Static)", step=0.01)
+renkoAtrLen = input.int(5, "Renko ATR Length", minval=1)
+renkoAtrTf = input.timeframe("360", "Renko ATR Timeframe")
+renkoAtrDivisor = input.float(12.0, "Renko ATR Divisor", minval=0.01, step=0.5)
+stLen = input.int(7, "Supertrend ATR Length")
+stFactor = input.float(4.0, "Supertrend Factor", step=0.1)
+atrLen = input.int(14, "ATR Length")
+atrMult = input.float(10.0, "Line Distance (ATR Multiplier)", step=0.25)
+smoothLen = input.int(5, "Line Smoothing", minval=1)
 
-brickModeInput   = input.string("Auto (ATR)", "Brick Size Mode", options=["Auto (ATR)", "Manual"], group="Renko Settings")
-manualBrickInput = input.float(10.0, "Manual Brick Size (points)", minval=0.0001, group="Renko Settings")
-atrLenBrickInput = input.int(14, "Auto Brick ATR Length", minval=1, group="Renko Settings")
+confirmOnClose = input.bool(true, "Confirm Signals On Bar Close")
+confirmBars = input.int(1, "Consecutive Bars To Confirm", minval=1)
+cooldownBars = input.int(3, "Minimum Bars Between Opposite Flips", minval=0)
+useDedup = input.bool(true, "De-duplicate Same-Direction Signals")
 
-atrLenInput  = input.int(14, "ATR Length", minval=1, group="ATR Stop Loss")
-atrMultInput = input.float(3.0, "ATR Multiplier", minval=0.1, step=0.1, group="ATR Stop Loss")
+// ticker.renko() only accepts a 'simple float' brick size, so a per-bar ATR value
+// can't be passed to it directly. Instead, build traditional Renko bricks manually
+// from live price using a live (series) ATR-derived brick size.
+dynamicAtr = request.security(syminfo.tickerid, renkoAtrTf, ta.atr(renkoAtrLen), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+dynamicBrickSize = dynamicAtr / renkoAtrDivisor
+effectiveBrickSize = useDynamicBrickSize ? dynamicBrickSize : brickSize
 
-rsiLenInput      = input.int(14, "RSI Length", minval=1, group="RSI Filter")
-rsiBuyLevelInput = input.float(60.0, "RSI Buy Threshold (must be above)", minval=0.0, maxval=100.0, group="RSI Filter")
-rsiSellLevelInput = input.float(40.0, "RSI Sell Threshold (must be below)", minval=0.0, maxval=100.0, group="RSI Filter")
+var float renkoClose = na
 
-adxLenInput      = input.int(14, "ADX/DI Length", minval=1, group="ADX Filter")
-adxDiLevelInput  = input.float(25.0, "DI Threshold (must be above)", minval=0.0, maxval=100.0, group="ADX Filter")
+if barstate.isfirst
+    renkoClose := close
 
-showLabelsInput = input.bool(true, "Show Buy/Sell Triangles", group="Display")
+// Traditional Renko: a new brick forms only once price moves a full brick size
+// beyond the last brick's close, in either direction.
+upThreshold = renkoClose + effectiveBrickSize
+downThreshold = renkoClose - effectiveBrickSize
 
-// ───────────────────────── Fixed-timeframe data feed ─────────────────────────
-// Every input to the Renko engine and the ATR stop is pulled from one fixed anchor
-// timeframe via request.security, so the brick sequence, brick size, and stop distance
-// all stay identical no matter what timeframe the chart itself is displaying.
-[fClose, brickAtr, stopAtr] = request.security(syminfo.tickerid, fixedTfInput,
-     [close, ta.atr(atrLenBrickInput), ta.atr(atrLenInput)],
-     lookahead=barmerge.lookahead_off)
+if close >= upThreshold and effectiveBrickSize > 0
+    bricksUp = math.floor((close - renkoClose) / effectiveBrickSize)
+    renkoClose := renkoClose + bricksUp * effectiveBrickSize
+else if close <= downThreshold and effectiveBrickSize > 0
+    bricksDown = math.floor((renkoClose - close) / effectiveBrickSize)
+    renkoClose := renkoClose - bricksDown * effectiveBrickSize
 
-brickSize = brickModeInput == "Manual" ? manualBrickInput : brickAtr
+// ta.supertrend() has no custom-source overload (it always uses the chart's own
+// hl2/ATR), so Supertrend is computed manually against the synthetic Renko close.
+f_supertrend(src, factor, stAtrLen) =>
+    atr = ta.atr(stAtrLen)
+    upperBasic = src + factor * atr
+    lowerBasic = src - factor * atr
 
-// ───────────────────────── Renko brick engine (in-memory only, not plotted) ─────────────────────────
-// State is carried in `var` floats/ints so it persists across bars and is driven purely by the
-// fixed-timeframe close, never by the chart's own bar time/timeframe.
-var float renkoClose   = na
-var int   renkoDir     = 0     // 1 = up brick series, -1 = down brick series
-var int   brickCount   = 0
+    var float upperBand = na
+    var float lowerBand = na
+    var int trendState = 1
 
-if na(renkoClose)
-    renkoClose := fClose
-    renkoDir   := 0
+    upperBand := (upperBasic < nz(upperBand[1], upperBasic) or src[1] > nz(upperBand[1], upperBasic)) ? upperBasic : nz(upperBand[1], upperBasic)
+    lowerBand := (lowerBasic > nz(lowerBand[1], lowerBasic) or src[1] < nz(lowerBand[1], lowerBasic)) ? lowerBasic : nz(lowerBand[1], lowerBasic)
 
-// Determine how many bricks the current price move represents, then step the synthetic
-// Renko close forward brick-by-brick so gaps of any size still produce correct sequential bricks.
-newBrickFormed = false
-if not na(brickSize) and brickSize > 0
-    diff = fClose - renkoClose
-    bricksMoved = int(math.floor(math.abs(diff) / brickSize))
-    if bricksMoved > 0
-        dirNow = diff > 0 ? 1 : -1
-        // Reversal requires 2 bricks in the opposite direction (classic Renko reversal rule)
-        reversal = renkoDir != 0 and dirNow != renkoDir
-        neededBricks = reversal ? 2 : 1
-        if bricksMoved >= neededBricks or not reversal
-            stepsToApply = reversal ? (bricksMoved >= 2 ? bricksMoved : 0) : bricksMoved
-            if stepsToApply > 0
-                for i = 1 to stepsToApply
-                    renkoClose := renkoClose + dirNow * brickSize
-                renkoDir := dirNow
-                brickCount := brickCount + stepsToApply
-                newBrickFormed := true
+    if src > upperBand[1]
+        trendState := 1
+    else if src < lowerBand[1]
+        trendState := -1
+    else
+        trendState := nz(trendState[1], 1)
 
-// ───────────────────────── ATR Trailing Stop on synthetic Renko series ─────────────────────────
-renkoSeries = renkoClose
-atr = stopAtr
+    stLine = trendState == 1 ? lowerBand : upperBand
+    [stLine, trendState]
 
-var float upTrail   = na
-var float downTrail = na
-var int   trend     = 1
+[renkoST, renkoDir] = f_supertrend(renkoClose, stFactor, stLen)
 
-src = renkoSeries
+// f_supertrend returns trendState: 1 = bullish, -1 = bearish
+bullFlipRaw = renkoDir > 0 and renkoDir[1] < 0
+bearFlipRaw = renkoDir < 0 and renkoDir[1] > 0
 
-upTrail   := na(upTrail[1])   ? src - atrMultInput * atr : (src[1] > upTrail[1] ? math.max(upTrail[1], src - atrMultInput * atr) : src - atrMultInput * atr)
-downTrail := na(downTrail[1]) ? src + atrMultInput * atr : (src[1] < downTrail[1] ? math.min(downTrail[1], src + atrMultInput * atr) : src + atrMultInput * atr)
+f_consecutiveAbove(src, level, bars) =>
+    ok = true
+    for i = 0 to bars - 1
+        ok := ok and src[i] > level[i]
+    ok
 
-trend := src > downTrail[1] ? 1 : src < upTrail[1] ? -1 : trend[1]
+f_consecutiveBelow(src, level, bars) =>
+    ok = true
+    for i = 0 to bars - 1
+        ok := ok and src[i] < level[i]
+    ok
 
-atrStop = trend == 1 ? upTrail : downTrail
-atrBuySignal  = trend == 1 and trend[1] == -1
-atrSellSignal = trend == -1 and trend[1] == 1
+atr = ta.atr(atrLen)
+lowerBand = ta.ema(close - atr * atrMult, smoothLen)
+upperBand = ta.ema(close + atr * atrMult, smoothLen)
 
-// ───────────────────────── RSI + ADX/DI filters ─────────────────────────
-rsiValue = ta.rsi(close, rsiLenInput)
+barsSinceFlip = nz(ta.barssince(bullFlipRaw or bearFlipRaw), 100000)
+rawConfirmOkLong = confirmBars <= 1 or f_consecutiveAbove(close, lowerBand, confirmBars)
+rawConfirmOkShort = confirmBars <= 1 or f_consecutiveBelow(close, upperBand, confirmBars)
+rawBarCloseOk = not confirmOnClose or barstate.isconfirmed
+rawCooldownOk = barsSinceFlip >= cooldownBars
 
-[diPlus, diMinus, _adx] = ta.dmi(adxLenInput, adxLenInput)
+var int trend = 0
+var int lastSignalDir = 0
+var int lastSignalBar = na
 
-buySignal  = atrBuySignal  and rsiValue > rsiBuyLevelInput  and diPlus  > adxDiLevelInput
-sellSignal = atrSellSignal and rsiValue < rsiSellLevelInput and diMinus > adxDiLevelInput
+bullFlip = bullFlipRaw and rawConfirmOkLong and rawBarCloseOk and rawCooldownOk and (not useDedup or lastSignalDir != 1)
+bearFlip = bearFlipRaw and rawConfirmOkShort and rawBarCloseOk and rawCooldownOk and (not useDedup or lastSignalDir != -1)
 
-// ───────────────────────── Plotting on the real candlestick chart ─────────────────────────
-atrStopPlot = plot(atrStop, "ATR Stop", color=trend == 1 ? color.new(color.green, 0) : color.new(color.red, 0), linewidth=2, style=plot.style_line)
+if bullFlip
+    trend := 1
+    lastSignalDir := 1
+    lastSignalBar := bar_index
+else if bearFlip
+    trend := -1
+    lastSignalDir := -1
+    lastSignalBar := bar_index
 
-plotshape(showLabelsInput and buySignal  ? atrStop : na, title="Buy",  style=shape.triangleup,   location=location.absolute, color=color.green, size=size.small)
-plotshape(showLabelsInput and sellSignal ? atrStop : na, title="Sell", style=shape.triangledown, location=location.absolute, color=color.red,   size=size.small)
+if na(trend[1])
+    trend := 0
 
-// Renko bricks are intentionally NOT plotted — only kept in memory to drive the ATR stop above.
+var float trail = na
+
+if trend == 1
+    trail := bullFlip or na(trail[1]) or trend[1] != 1 ? lowerBand : math.max(trail[1], lowerBand)
+else if trend == -1
+    trail := bearFlip or na(trail[1]) or trend[1] != -1 ? upperBand : math.min(trail[1], upperBand)
+
+lineColor = trend == 1 ? color.lime : color.red
+pTrail = plot(trend != 0 ? trail : na, "ATR Trend Trail", color=lineColor, linewidth=3)
+pClose = plot(close, "Price", color=color.new(color.white, 100))
+fill(pTrail, pClose, color=trend == 1 ? color.new(color.green, 88) : trend == -1 ? color.new(color.red, 88) : na, title="Trend Background")
+
+plotshape(bullFlip, title="BUY", style=shape.triangleup, location=location.belowbar, color=color.green, size=size.small)
+plotshape(bearFlip, title="SELL", style=shape.triangledown, location=location.abovebar, color=color.red, size=size.small)
+
+if bullFlip
+    alert("RENKO SUPERTREND BUY — Bullish flip", alert.freq_once_per_bar_close)
+if bearFlip
+    alert("RENKO SUPERTREND SELL — Bearish flip", alert.freq_once_per_bar_close)
+
+atrLineColor = trend == 1 ? color.lime : trend == -1 ? color.red : color.gray
+atrLevel = trend == 1 ? close - atr : trend == -1 ? close + atr : na
+plot(atrLevel, "ATR Level", color=atrLineColor, linewidth=2)
+plotshape(bullFlip, title="ATR BUY", style=shape.triangleup, location=location.belowbar, color=color.green, size=size.tiny)
+plotshape(bearFlip, title="ATR SELL", style=shape.triangledown, location=location.abovebar, color=color.red, size=size.tiny)

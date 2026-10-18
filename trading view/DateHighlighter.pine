@@ -1,0 +1,88 @@
+//@version=6
+
+// =============================================================================
+// DATE HIGHLIGHTER — What does this indicator do? (Plain English)
+// =============================================================================
+// Lets you mark up to 5 specific calendar dates (earnings day, event day,
+// anniversary of a breakout, etc.) directly in the settings.
+//
+// HOW IT WORKS:
+//   1. Type the Year / Month / Day for each "Date N" slot.
+//   2. Toggle "Show" for that slot on/off.
+//   3. Pick a color for that slot.
+//   4. On the bar(s) that fall on that calendar date, the chart background
+//      is tinted with a faint vertical band in the chosen color — like a
+//      highlighter marking that day on the chart, from top to bottom.
+//
+// Dates are plain Year/Month/Day numbers (not a date-time picker) so there
+// is no timezone ambiguity: they are compared directly against the calendar
+// date of each bar in the chart's own timezone.
+//
+// Works on any timeframe: on intraday charts every bar within that calendar
+// day gets tinted, so the whole day's session is highlighted; on daily+
+// charts the single bar for that day is highlighted.
+// =============================================================================
+
+indicator("Date Highlighter", overlay = true)
+
+// ---------------------------------------------------------------------------
+// Inputs — 5 independent date slots (Year / Month / Day as plain numbers)
+// ---------------------------------------------------------------------------
+grp1 = "Date 1"
+show1  = input.bool(true, title = "Show", group = grp1, inline = "d1")
+y1 = input.int(2026, title = "Year", group = grp1, inline = "d1", minval = 1970)
+m1 = input.int(4,    title = "Month", group = grp1, inline = "d1", minval = 1, maxval = 12)
+d1 = input.int(15,   title = "Day", group = grp1, inline = "d1", minval = 1, maxval = 31)
+color1 = input.color(color.new(color.yellow, 70), title = "Color", group = grp1)
+
+grp2 = "Date 2"
+show2  = input.bool(true, title = "Show", group = grp2, inline = "d2")
+y2 = input.int(2025, title = "Year", group = grp2, inline = "d2", minval = 1970)
+m2 = input.int(5,    title = "Month", group = grp2, inline = "d2", minval = 1, maxval = 12)
+d2 = input.int(13,   title = "Day", group = grp2, inline = "d2", minval = 1, maxval = 31)
+color2 = input.color(color.new(color.yellow, 70), title = "Color", group = grp2)
+
+grp3 = "Date 3"
+show3  = input.bool(true, title = "Show", group = grp3, inline = "d3")
+y3 = input.int(2024, title = "Year", group = grp3, inline = "d3", minval = 1970)
+m3 = input.int(4,    title = "Month", group = grp3, inline = "d3", minval = 1, maxval = 12)
+d3 = input.int(1,    title = "Day", group = grp3, inline = "d3", minval = 1, maxval = 31)
+color3 = input.color(color.new(color.yellow, 70), title = "Color", group = grp3)
+
+grp4 = "Date 4"
+show4  = input.bool(true, title = "Show", group = grp4, inline = "d4")
+y4 = input.int(2023, title = "Year", group = grp4, inline = "d4", minval = 1970)
+m4 = input.int(4,    title = "Month", group = grp4, inline = "d4", minval = 1, maxval = 12)
+d4 = input.int(11,   title = "Day", group = grp4, inline = "d4", minval = 1, maxval = 31)
+color4 = input.color(color.new(color.yellow, 70), title = "Color", group = grp4)
+
+grp5 = "Date 5"
+show5  = input.bool(true, title = "Show", group = grp5, inline = "d5")
+y5 = input.int(2022, title = "Year", group = grp5, inline = "d5", minval = 1970)
+m5 = input.int(7,    title = "Month", group = grp5, inline = "d5", minval = 1, maxval = 12)
+d5 = input.int(18,   title = "Day", group = grp5, inline = "d5", minval = 1, maxval = 31)
+color5 = input.color(color.new(color.yellow, 70), title = "Color", group = grp5)
+
+// ---------------------------------------------------------------------------
+// Helper — does the current bar fall on the given calendar date?
+// year()/month()/dayofmonth() with no timezone arg read the chart's own
+// timezone, i.e. exactly what you see on the time axis — no UTC/exchange
+// timezone mismatch is possible since we never build a second timestamp.
+// ---------------------------------------------------------------------------
+isDate(yy, mm, dd) =>
+    year(time) == yy and month(time) == mm and dayofmonth(time) == dd
+
+match1 = show1 and isDate(y1, m1, d1)
+match2 = show2 and isDate(y2, m2, d2)
+match3 = show3 and isDate(y3, m3, d3)
+match4 = show4 and isDate(y4, m4, d4)
+match5 = show5 and isDate(y5, m5, d5)
+
+// ---------------------------------------------------------------------------
+// Paint the faint vertical background band for whichever date(s) match
+// ---------------------------------------------------------------------------
+bgcolor(match1 ? color1 : na, title = "Date 1 Highlight")
+bgcolor(match2 ? color2 : na, title = "Date 2 Highlight")
+bgcolor(match3 ? color3 : na, title = "Date 3 Highlight")
+bgcolor(match4 ? color4 : na, title = "Date 4 Highlight")
+bgcolor(match5 ? color5 : na, title = "Date 5 Highlight")

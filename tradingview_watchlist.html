@@ -68,6 +68,11 @@
       <input type="file" id="marketsmithCsvFile" accept=".csv" />
     </div>
 
+    <div class="box">
+      <h3>CSV File (Chart ink backtesting csv output)</h3>
+      <input type="file" id="marketcapCsvFile" accept=".csv" />
+    </div>
+
     <div id="output"></div>
 
     <script>
@@ -81,6 +86,10 @@
 
       document
         .getElementById("marketsmithCsvFile")
+        .addEventListener("change", (e) => readCsvByColumn(e, "symbol"));
+
+      document
+        .getElementById("marketcapCsvFile")
         .addEventListener("change", (e) => readCsvByColumn(e, "symbol"));
 
       function readCsvByColumn(e, columnName) {
