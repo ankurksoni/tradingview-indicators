@@ -10,13 +10,14 @@ sourceTf = input.timeframe("360", "Auto Brick Source Timeframe")
 sourceAtrLen = input.int(5, "Source Renko ATR Length", minval=1)
 brickDivisor = input.float(12.0, "Auto Brick Divisor", minval=0.1, step=0.5)
 
-// Displayed ATR Supertrend line
-lineAtrLen = input.int(144, "ATR Line Length", minval=1)
-lineFactor = input.float(15.0, "ATR Line Multiplier", minval=0.1, step=0.1)
-
 // Renko Supertrend signal settings
 renkoStLen = input.int(7, "Renko Supertrend ATR Length", minval=1)
 renkoStFactor = input.float(4.0, "Renko Supertrend Factor", minval=0.1, step=0.1)
+
+// Standard ATR Supertrend display settings
+lineAtrLen = input.int(144, "ATR Line Length", minval=1)
+lineFactor = input.float(15.0, "ATR Line Multiplier", minval=0.1, step=0.1)
+fillTransparency = input.int(92, "Trend Fill Transparency", minval=0, maxval=100)
 
 // ───────── AUTOMATIC BRICK SIZE ─────────
 atrRenkoTicker = ticker.renko(syminfo.tickerid, "ATR", sourceAtrLen)
@@ -39,8 +40,13 @@ var table brickTable = table.new(position.top_right, 1, 2, border_width=1)
 
 if barstate.islast
     if renkoMode == "Automated ATR"
-        table.cell(brickTable, 0, 0, "Automated Brick Size", text_color=color.white, bgcolor=color.rgb(40, 40, 40))
-        table.cell(brickTable, 0, 1, na(activeBrickSize) ? "Calculating..." : str.tostring(activeBrickSize, format.mintick), text_color=color.yellow, bgcolor=color.rgb(40, 40, 40))
+        table.cell(
+             brickTable, 0, 0, "Automated Brick Size",
+             text_color=color.white, bgcolor=color.rgb(40, 40, 40))
+        table.cell(
+             brickTable, 0, 1,
+             na(activeBrickSize) ? "Calculating..." : str.tostring(activeBrickSize, format.mintick),
+             text_color=color.yellow, bgcolor=color.rgb(40, 40, 40))
     else
         table.clear(brickTable, 0, 0, 0, 1)
 
@@ -60,14 +66,23 @@ if na(renkoClose) and not na(activeBrickSize)
 if not na(renkoClose) and not na(activeBrickSize)
     int processed = 0
 
-    while processed < 100 and (close >= renkoClose + activeBrickSize or close <= renkoClose - activeBrickSize)
+    while processed < 100 and (
+         close >= renkoClose + activeBrickSize or
+         close <= renkoClose - activeBrickSize)
+
         float oldClose = renkoClose
         float newClose = close > oldClose ? oldClose + activeBrickSize : oldClose - activeBrickSize
 
+        // Synthetic Renko brick range
         float brickHigh = math.max(oldClose, newClose)
         float brickLow = math.min(oldClose, newClose)
-        float tr = math.max(brickHigh - brickLow, math.max(math.abs(brickHigh - oldClose), math.abs(brickLow - oldClose)))
+        float tr = math.max(
+             brickHigh - brickLow,
+             math.max(
+                 math.abs(brickHigh - oldClose),
+                 math.abs(brickLow - oldClose)))
 
+        // Wilder ATR calculated on Renko bricks
         renkoAtr := na(renkoAtr) ? tr : renkoAtr + (tr - renkoAtr) / renkoStLen
 
         float midpoint = (brickHigh + brickLow) / 2.0
@@ -81,11 +96,13 @@ if not na(renkoClose) and not na(activeBrickSize)
         finalUpper := na(previousUpper) or basicUpper < previousUpper or oldClose > previousUpper ? basicUpper : previousUpper
         finalLower := na(previousLower) or basicLower > previousLower or oldClose < previousLower ? basicLower : previousLower
 
+        // Supertrend direction: -1 bullish, +1 bearish
         if previousDir == 1 and newClose > finalUpper
             renkoStDir := -1
         else if previousDir == -1 and newClose < finalLower
             renkoStDir := 1
 
+        // Signals only on Renko Supertrend flips
         if previousDir > 0 and renkoStDir < 0
             bullFlip := true
         else if previousDir < 0 and renkoStDir > 0
@@ -94,17 +111,48 @@ if not na(renkoClose) and not na(activeBrickSize)
         renkoClose := newClose
         processed += 1
 
-// ───────── ATR 14, MULTIPLIER 5 LINE ─────────
-// Standard price-chart Supertrend; color follows Renko Supertrend direction.
+// ───────── STANDARD ATR SUPERTREND (14, 5) ─────────
 [lineST, lineDir] = ta.supertrend(lineFactor, lineAtrLen)
-lineColor = renkoStDir < 0 ? color.green : color.red
 
-plot(lineDir < 0 ? lineST : na, "ATR Supertrend 14/5", color=lineColor, linewidth=2, style=plot.style_linebr)
-plot(lineDir > 0 ? lineST : na, "ATR Supertrend 14/5", color=lineColor, linewidth=2, style=plot.style_linebr)
+// Line and fill color follow Renko Supertrend direction.
+trendColor = renkoStDir < 0 ? color.green : color.red
+
+stPlot = plot(
+     lineST,
+     title="ATR Supertrend 14/5",
+     color=trendColor,
+     linewidth=2,
+     style=plot.style_linebr)
+
+// Hidden close plot used as the fill boundary.
+pricePlot = plot(
+     close,
+     title="Fill Boundary",
+     display=display.none)
+
+// Light shading between candle close and ATR Supertrend.
+fill(
+     pricePlot,
+     stPlot,
+     color=color.new(trendColor, fillTransparency),
+     title="Renko Trend Shading")
 
 // ───────── BUY/SELL SIGNALS ─────────
-plotshape(bullFlip, title="BUY", style=shape.triangleup, location=location.belowbar, color=color.green, size=size.small)
-plotshape(bearFlip, title="SELL", style=shape.triangledown, location=location.abovebar, color=color.red, size=size.small)
+plotshape(
+     bullFlip,
+     title="BUY",
+     style=shape.triangleup,
+     location=location.belowbar,
+     color=color.green,
+     size=size.small)
+
+plotshape(
+     bearFlip,
+     title="SELL",
+     style=shape.triangledown,
+     location=location.abovebar,
+     color=color.red,
+     size=size.small)
 
 // ───────── ALERTS ─────────
 if bullFlip
