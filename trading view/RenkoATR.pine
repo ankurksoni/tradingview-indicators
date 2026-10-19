@@ -1,5 +1,4 @@
-
- //@version=6
+//@version=6
 indicator("Adaptive Renko Supertrend Flip Signals", overlay=true, max_bars_back=5000)
 
 // ───────── INPUTS ─────────
@@ -14,7 +13,7 @@ brickDivisor = input.float(12.0, "Auto Brick Divisor", minval=0.1, step=0.5)
 renkoStLen = input.int(7, "Renko Supertrend ATR Length", minval=1)
 renkoStFactor = input.float(4.0, "Renko Supertrend Factor", minval=0.1, step=0.1)
 
-// Standard ATR Supertrend display settings
+// ATR line display settings
 lineAtrLen = input.int(144, "ATR Line Length", minval=1)
 lineFactor = input.float(15.0, "ATR Line Multiplier", minval=0.1, step=0.1)
 fillTransparency = input.int(92, "Trend Fill Transparency", minval=0, maxval=100)
@@ -32,6 +31,7 @@ autoBrickCandidate = request.security(
 brickSize = renkoMode == "Manual Traditional" ? manualBrickSize : autoBrickCandidate
 
 var float activeBrickSize = na
+
 if not na(brickSize) and brickSize > 0
     activeBrickSize := brickSize
 
@@ -76,6 +76,7 @@ if not na(renkoClose) and not na(activeBrickSize)
         // Synthetic Renko brick range
         float brickHigh = math.max(oldClose, newClose)
         float brickLow = math.min(oldClose, newClose)
+
         float tr = math.max(
              brickHigh - brickLow,
              math.max(
@@ -96,13 +97,13 @@ if not na(renkoClose) and not na(activeBrickSize)
         finalUpper := na(previousUpper) or basicUpper < previousUpper or oldClose > previousUpper ? basicUpper : previousUpper
         finalLower := na(previousLower) or basicLower > previousLower or oldClose < previousLower ? basicLower : previousLower
 
-        // Supertrend direction: -1 bullish, +1 bearish
+        // Renko Supertrend direction: -1 bullish, +1 bearish
         if previousDir == 1 and newClose > finalUpper
             renkoStDir := -1
         else if previousDir == -1 and newClose < finalLower
             renkoStDir := 1
 
-        // Signals only on Renko Supertrend flips
+        // Signals exclusively on Renko Supertrend flips
         if previousDir > 0 and renkoStDir < 0
             bullFlip := true
         else if previousDir < 0 and renkoStDir > 0
@@ -111,29 +112,54 @@ if not na(renkoClose) and not na(activeBrickSize)
         renkoClose := newClose
         processed += 1
 
-// ───────── STANDARD ATR SUPERTREND (14, 5) ─────────
-[lineST, lineDir] = ta.supertrend(lineFactor, lineAtrLen)
+// ───────── ATR LINE CONTROLLED BY RENKO DIRECTION ─────────
+// Calculate ATR on normal chart candles, not on synthetic Renko bricks.
+atrValue = ta.atr(lineAtrLen)
 
-// Line and fill color follow Renko Supertrend direction.
+// Raw ATR bands around the candle midpoint.
+midPrice = (high + low) / 2.0
+upperBand = midPrice + lineFactor * atrValue
+lowerBand = midPrice - lineFactor * atrValue
+
+// Persistent line: only reset its side when Renko Supertrend flips.
+var float controlledAtrLine = na
+var int previousRenkoDir = na
+
+if not na(atrValue)
+    if na(previousRenkoDir)
+        previousRenkoDir := renkoStDir
+        controlledAtrLine := renkoStDir < 0 ? lowerBand : upperBand
+    else
+        if renkoStDir != previousRenkoDir
+            // Reset the line only when Renko Supertrend changes direction.
+            controlledAtrLine := renkoStDir < 0 ? lowerBand : upperBand
+        else if renkoStDir < 0
+            // Bullish: trail upward; never flip from candle price crossing.
+            controlledAtrLine := na(controlledAtrLine) ? lowerBand : math.max(controlledAtrLine, lowerBand)
+        else
+            // Bearish: trail downward; never flip from candle price crossing.
+            controlledAtrLine := na(controlledAtrLine) ? upperBand : math.min(controlledAtrLine, upperBand)
+
+        previousRenkoDir := renkoStDir
+
+// ───────── ATR LINE AND LIGHT TREND FILL ─────────
 trendColor = renkoStDir < 0 ? color.green : color.red
 
-stPlot = plot(
-     lineST,
-     title="ATR Supertrend 14/5",
+atrPlot = plot(
+     controlledAtrLine,
+     title="Renko-Controlled ATR Line",
      color=trendColor,
      linewidth=2,
      style=plot.style_linebr)
 
-// Hidden close plot used as the fill boundary.
 pricePlot = plot(
      close,
      title="Fill Boundary",
      display=display.none)
 
-// Light shading between candle close and ATR Supertrend.
 fill(
      pricePlot,
-     stPlot,
+     atrPlot,
      color=color.new(trendColor, fillTransparency),
      title="Renko Trend Shading")
 
