@@ -2,12 +2,14 @@
 indicator("AI Renko Supertrend", shorttitle = "AI Renko Supertrend", overlay = true)
 
 // ───────────────────────── Inputs ─────────────────────────
-atrLen     = input.int(14, "ATR Length", minval = 1, maxval = 50)
+atrLen     = input.int(10, "ATR Length", minval = 1, maxval = 50)
 baseFactor = input.float(3.0, "Base Factor", minval = 0.5, maxval = 8.0, step = 0.1)
 autoBox    = input.bool(true, "Auto Brick Size")
 manualBox  = input.float(10.0, "Manual Brick Size", minval = 0.01, step = 0.01)
-volFilter  = input.bool(false, "Choppy Filter (ADX)")
-adxThresh  = input.int(15, "ADX Threshold", minval = 5, maxval = 40)
+lateOn     = input.bool(true, "Grey out late signals", group = "Late Signal")
+lateHour   = input.int(14, "Cutoff Hour (exchange time, 0-23)", minval = 0, maxval = 23, group = "Late Signal")
+lateMin    = input.int(30, "Cutoff Minute", minval = 0, maxval = 59, group = "Late Signal")
+lateCol    = input.color(color.gray, "Late Signal Color", group = "Late Signal")
 
 bullCol = input.color(#008000, "Bull", group = "Style")
 bearCol = input.color(#FF0000, "Bear", group = "Style")
@@ -23,7 +25,6 @@ f_rma(float x, int len) =>
 longLen  = 3 * atrLen
 shortLen = math.max(atrLen - 4, 5)
 slowLen  = math.min(atrLen + 4, 40)
-adxLen   = 14
 
 tr = ta.tr(true)
 atrBase  = f_rma(tr, atrLen)
@@ -96,36 +97,35 @@ degenerate = (not na(renkoAtr) and renkoAtr <= 0) or (not na(upper) and not na(l
 dir := na(pLine) ? 1 : degenerate ? (na(pDir) ? 1 : pDir) : nz(pLine) == nz(pUpper) ? (rClose > finalUpper ? 1 : -1) : (rClose < finalLower ? -1 : 1)
 stLine := dir == 1 ? finalLower : finalUpper
 
-// ───────────────────────── ADX filter ─────────────────────────
-upMove   = nz(high - high[1])
-downMove = nz(low[1] - low)
-plusDM   = upMove > downMove and upMove > 0 ? upMove : 0.0
-minusDM  = downMove > upMove and downMove > 0 ? downMove : 0.0
-adxTr    = f_rma(tr, adxLen)
-plusRma  = f_rma(plusDM, adxLen)
-minusRma = f_rma(minusDM, adxLen)
-plusDI   = adxTr != 0 ? 100 * plusRma / adxTr : na
-minusDI  = adxTr != 0 ? 100 * minusRma / adxTr : na
-diSum    = plusDI + minusDI
-dx       = na(diSum) ? na : diSum != 0 ? 100 * math.abs(plusDI - minusDI) / diSum : 0.0
-adx      = f_rma(dx, adxLen)
-
-trendOk  = not volFilter or (not na(adx) and adx > adxThresh)
-
 // ───────────────────────── Plot ─────────────────────────
 valid  = ready and brick > 0 and renkoAtr > 0 and rHigh != rLow
 isBull = dir == 1
-col    = isBull ? bullCol : bearCol
+
+tz       = syminfo.timezone
+minOfDay = hour(time, tz) * 60 + minute(time, tz)
+isLate  = lateOn and (minOfDay >= lateHour * 60 + lateMin)
+newDay  = dayofmonth(time, tz) != dayofmonth(time[1], tz)
+flipped = nz(pDir, dir) != dir
+// a trend that flipped after the cutoff stays grey until the next flip or the next day
+var bool lateTrend = false
+lateTrend := flipped ? isLate : newDay ? false : lateTrend
+
+col = lateTrend ? lateCol : isBull ? bullCol : bearCol
 
 stPlot    = plot(valid ? stLine : na, "Supertrend Line", color = col, linewidth = 2, style = plot.style_linebr)
 closePlot = plot(valid ? close : na, "Close (fill ref)", display = display.none, editable = false)
 fill(closePlot, stPlot, color = color.new(col, 91), title = "Trend Fill")
 
-buySig  = valid and dir == 1 and nz(pDir, dir) == -1 and trendOk
-sellSig = valid and dir == -1 and nz(pDir, dir) == 1 and trendOk
+buySig  = valid and dir == 1 and nz(pDir, dir) == -1
+sellSig = valid and dir == -1 and nz(pDir, dir) == 1
 
-plotshape(buySig, "BULL", shape.labelup, location.belowbar, color = bullCol, textcolor = color.white, text = "BUY", size = size.small)
-plotshape(sellSig, "BEAR", shape.labeldown, location.abovebar, color = bearCol, textcolor = color.white, text = "SELL", size = size.small)
+plotshape(buySig, "BULL", shape.labelup, location.belowbar, color = isLate ? lateCol : bullCol, textcolor = color.white, text = "BUY", size = size.small)
+plotshape(sellSig, "BEAR", shape.labeldown, location.abovebar, color = isLate ? lateCol : bearCol, textcolor = color.white, text = "SELL", size = size.small)
 
 alertcondition(buySig, "Renko Supertrend BUY", "Renko Supertrend turned bullish")
 alertcondition(sellSig, "Renko Supertrend SELL", "Renko Supertrend turned bearish")
+
+// ───────────────────────── ATR Readout ─────────────────────────
+var atrTbl = table.new(position.top_right, 1, 1, bgcolor = color.new(color.black, 30), border_width = 0)
+if barstate.islast
+    table.cell(atrTbl, 0, 0, "ATR: " + (na(renkoAtr) ? "n/a" : str.tostring(renkoAtr, format.mintick)), text_color = color.white, text_size = size.normal)
