@@ -1,5 +1,5 @@
 //@version=6
-indicator("AI Renko Supertrend + Trend State Engine", shorttitle="Renko NATSE Rocket", overlay=true, max_bars_back=1000)
+indicator("AI Renko Supertrend + Trend State Engine", shorttitle="Renko Rocket", overlay=true, max_bars_back=1000)
 
 // Merge of "AI Renko Supertrend" (trend colour / line) and "Adaptive Trend State Engine 3.0" (state machine).
 // ENTRY : engine turns bullish/bearish AND the Renko Supertrend agrees -> rocket of stacked triangles.
@@ -21,6 +21,7 @@ skipFirst  = input.bool(true, "Skip entries on the day's first candle", group = 
 
 bullCol = input.color(#008000, "Bull", group = "Style")
 bearCol = input.color(#FF0000, "Bear", group = "Style")
+paintGradient = input.bool(true, "Paint Trend Gradient Fill", group = "Style", tooltip = "Fade-out colour fill between the Supertrend and the candle.")
 
 //=====================================================================
 // 2. INPUTS - Trend State Engine
@@ -352,8 +353,8 @@ fillTop = math.max(clearAt, stV)
 fillBot = math.min(clearAt, stV)
 nearST  = color.new(col, 55)
 atCandle = color.new(col, 100)
-topCol  = isBull ? atCandle : nearST   // bull: ST is below price, bear: ST is above price
-botCol  = isBull ? nearST   : atCandle
+topCol  = not paintGradient ? na : isBull ? atCandle : nearST   // bull: ST is below price, bear: ST is above price
+botCol  = not paintGradient ? na : isBull ? nearST   : atCandle
 fill(closePlot, stPlot, fillTop, fillBot, topCol, botCol, title = "Trend Crystal Gradient")
 
 // Faint glass edge: thin brighter band right on the Supertrend line
