@@ -1,176 +1,192 @@
 // This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
 // © finallynitin & © EquityCraze
-
-//The script builds upon the Volume Price and Fundamentals script by Mohit_Kakkar08:
-//https://www.tradingview.com/script/WQCSvzGz-Volume-Price-and-Fundamentals/
-
+// Modified to include comprehensive header (MCap, ROE, ROCE, Listed, 10:20 EMA), QoQ metrics, OPM%, and P/E
 
 //@version=5
+indicator('Earnings & Fundamentals Dashboard', shorttitle='Fundamentals', overlay=true)
 
-indicator('Quarterly Earnings', overlay=true)
-
-//Table Options
-
-string GRP1             = "════════ Modes ═════════"
-toggleDarkColors = input(title="Dark Mode", defval=false, group = GRP1, tooltip = 'Select this if you use a dark color theme')
+//════════ Table Options ═════════
+string GRP1 = "════════ Modes ═════════"
 toggleMiniMode = input(title="Mini Mode", defval=false, group = GRP1, tooltip = 'Select this to get the Mini mode where the values are replaced by traffic lights for a quick visual')
-datasize = input.int(4, 'Long Mode ?', minval = 4, inline='line 3', group=GRP1, tooltip = 'Input the number of previous quarters to be displayed in the table') +5
+datasize = input.int(4, 'Long Mode ?', minval = 4, inline='line 3', group=GRP1, tooltip = 'Input the number of previous quarters to be displayed in the table') + 5
 
-string GRP2             = "════════ Table Options ═════════"
-string tablesize = input.string("small",  "Size",      inline = "21", group = GRP2, options = ["tiny", "small", "normal", "large", "huge", "auto"])
-string tableposY = input.string("bottom", "↕",         inline = "21", group = GRP2, options = ["top", "middle", "bottom"])
-string tableposX = input.string("right",   "↔",         inline = "21", group = GRP2, options = ["left", "center", "right"])
+string GRP2 = "════════ Table Options ═════════"
+string tablesize = input.string("normal", "Size", inline = "21", group = GRP2, options = ["tiny", "small", "normal", "large", "huge", "auto"])
+string tableposY = input.string("bottom", "↕", inline = "21", group = GRP2, options = ["top", "middle", "bottom"])
+string tableposX = input.string("right", "↔", inline = "21", group = GRP2, options = ["left", "center", "right"])
+float bottomGap = input.float(8.0, "Bottom Gap (% of chart height)", minval = 0.0, maxval = 40.0, step = 1.0, group = GRP2, tooltip = 'Empty space under the table when it is placed at the bottom, so it clears the chart\'s earnings/volume markers')
 
-string GRP3             = "════════ Inputs ═════════"
+string GRP3 = "════════ Inputs ═════════"
+emaLookback = input.int(252, 'EMA Support Lookback Bars', minval=10, maxval=2000, group=GRP3)
 per = input.string('FQ', 'Period', options=['FQ', 'FY'], inline='line 3', group=GRP3, tooltip = 'Option to change the data from Quarterly (FQ) to Yearly (FY)')
-topleft = input.string('FF','Top-left cell displays', group = GRP3, options = ['FF', 'Mcap'], tooltip = 'Option to display either the Free Float (FF) or the Marketcap (Mcap) of the stock')
 
-FrameCol = toggleDarkColors ? color.new(#999999, 50) : color.rgb(241, 241, 241)
-BorderCol = toggleDarkColors ? color.new(#999999, 50) : color.rgb(241, 241, 241)
+//════════ Colors (dark theme) ═════════
+FrameCol = color.rgb(54, 58, 69)         // outer frame
+BorderCol = color.rgb(42, 46, 57)        // subtle cell dividers
+TextColor = color.white
+BGColor = color.rgb(19, 23, 34)          // panel background
+HeadColor = color.rgb(30, 34, 45)        // header rows
+BodyColor = color.rgb(19, 23, 34)        // data rows
+UpColor = color.rgb(144, 224, 160)       // light green
+DownColor = color.rgb(255, 138, 138)     // light red
+UnchangedColor = color.rgb(178, 181, 190) // neutral grey
 
-TextColor = toggleDarkColors ? color.new(color.white, 0): color.new(color.black, 0)
-BGColor = toggleDarkColors ? color.new(color.white, 100): color.new(color.black, 100)
-HeadColor = toggleDarkColors ? color.new(color.white, 100): color.new(color.black, 100)
-BodyColor = toggleDarkColors ? color.new(color.white, 100): color.new(color.black, 100)
-UpColor = toggleDarkColors ? color.new(color.lime, 0) : color.new(color.rgb(31, 12, 239, 16), 0)
-DownColor = toggleDarkColors ? color.new(color.red, 0) : color.new(color.rgb(213, 27, 182), 10)
-UnchangedColor = toggleDarkColors ? color.new(color.yellow, 0) : color.new(color.orange, 30)
-
-    
-// Creating ID for Financials
-
-financial01 = 'EPS'
-financial02 = 'Sales'
-
+//════════ Financial IDs ═════════
 financial01id = 'EARNINGS_PER_SHARE_DILUTED'
-financial02id = 'TOTAL_REVENUE', 
+financial02id = 'TOTAL_REVENUE'
+financial03id = 'OPERATING_MARGIN'
 
-
-// Creating functions to fetch financial data from Tradingview
-
+//════════ Functions ═════════
 getFinFQ(_id, _per) => 
     _financials = request.financial(syminfo.tickerid, _id, _per, barmerge.gaps_on, ignore_invalid_symbol = true)
     if _id == financial02id 
         _financials := math.round(_financials / 10.0, 2)
     _financials
 
-
-f_array(arrayId, val)    => 
+f_array(arrayId, val) => 
     array.unshift(arrayId, val)
     array.pop(arrayId)
 
+// Data fetching
+rev = request.financial(syminfo.tickerid, 'TOTAL_REVENUE', per, barmerge.gaps_on, ignore_invalid_symbol=true)
 
-finID1   = financial01 
-finID2  = financial02
-get_finx(finID) =>
-    finx = switch finID
-        financial02  => financial02id
-        financial01  => financial01id
-    finx
+finData1 = getFinFQ(financial01id, per)
+finData2 = getFinFQ(financial02id, per)
+finData3 = getFinFQ(financial03id, per)
+// P/E = price at result date / TTM diluted EPS (the built-in PRICE_EARNINGS_RATIO is often unavailable)
+epsTtmPE = request.financial(syminfo.tickerid, financial01id, 'TTM', barmerge.gaps_on, ignore_invalid_symbol = true)
+finData4 = na(epsTtmPE) or epsTtmPE <= 0 ? na : close / epsTtmPE
 
-
-// Reference if data is true
-rev = request.financial(syminfo.tickerid,'TOTAL_REVENUE',per,barmerge.gaps_on, ignore_invalid_symbol=true)
-
-
-// Calculating
-
-finx1 = get_finx(finID1)
-finx2 = get_finx(finID2)
-finData1 = getFinFQ(finx1, per)
-finData2 = getFinFQ(finx2, per)
-
-var date = array.new_int(datasize)  // Date
-var arrayFinData1 = array.new_float(datasize)  // EPS
-var arrayFinData2 = array.new_float(datasize)  // Sales
-
+var date = array.new_int(datasize)
+var arrayFinData1 = array.new_float(datasize) // EPS
+var arrayFinData2 = array.new_float(datasize) // Sales
+var arrayFinData3 = array.new_float(datasize) // OPM
+var arrayFinData4 = array.new_float(datasize) // PE
 
 if rev
-    f_array(date,  time)
+    f_array(date, time)
     f_array(arrayFinData1, finData1)
     f_array(arrayFinData2, finData2)
+    f_array(arrayFinData3, finData3)
+    f_array(arrayFinData4, finData4)
 
-ft(_table, _column, _row, _value) => 
-    table.cell(table_id = _table, column = _column, row = _row, text = _value, bgcolor = HeadColor, text_color = TextColor, text_size = tablesize)
-
+// Standard cell drawing
 ftdate(_table, _column, _row, _value) => 
     _new_value = str.contains(_value, "70") ? "" : _value
-    table.cell(table_id = _table, column = _column, row = _row, text = _new_value, bgcolor = BodyColor, text_color = TextColor, text_size = tablesize, text_halign = text.align_left )
+    table.cell(table_id = _table, column = _column, row = _row, text = _new_value, bgcolor = BodyColor, text_color = TextColor, text_size = tablesize, text_halign = text.align_left)
 
-fcell(finID, _table, _column, _row, _value, _i) =>  
-    divider = 0
-    divider     := 
-         finID == 'EPS' ? 1 : 1000000
-    suffix      =  
-         finID == 'EPS' or finID == financial02 ? '' :  ' M'
-    strFormat   =  
-         finID == 'EPS' ? '#.#' : finID == financial02 ? '#,###.#' : '#,##0' 
-    val = array.get(_value, _i)/ divider
-    table.cell(table_id = _table,  column = _column, row = _row, text = na(val) ? "" : str.tostring(val, strFormat) +suffix,  text_color = TextColor,  text_size = tablesize)
-
+fcell(isEps, _table, _column, _row, _value, _i, _isPct=false, _isFloat=false) =>  
+    val = array.get(_value, _i)
+    if not isEps and not _isPct and not _isFloat
+        val := val / 1000000 // Convert Sales to Millions
     
+    strFormat = isEps ? '#.#' : _isPct ? '#.##' : _isFloat ? '#.#' : '#,###.#'
+    suffix = _isPct ? '%' : ''
+    
+    // For OPM%, it returns as a decimal, multiply by 100
+    if _isPct and not na(val)
+        val := val * 100
+        
+    table.cell(table_id = _table, column = _column, row = _row, text = na(val) ? "" : str.tostring(val, strFormat) + suffix, text_color = TextColor, text_size = tablesize, bgcolor = BodyColor, text_halign = text.align_right)
 
-fyoy(_table, _column, _row, _value, _i, _cmpr) =>  
+// YoY/QoQ Calculation and Cell drawing
+fchange(_table, _column, _row, _value, _i, _cmpr) =>  
     sym = ""  
     dif = 0.0 
     if na(_value)
         na
     else
         val1 = array.get(_value, _i)
-        val2 = array.get(_value, _i+_cmpr)
+        val2 = array.get(_value, _i + _cmpr)
         val1 := val1 == 0 ? 1 : val1
         val2 := math.round(val2, 1) == 0 or math.round(val2, 1) == -0 ? 0.1 : val2
-        dif := math.round(((val1-val2) / math.abs(val2)) * 100) // Change to absolute value
-        sym := na(dif) ? "" : dif > 0 ? '+'+str.tostring(dif)+'%' : str.tostring(dif)+'%'
+        dif := math.round(((val1 - val2) / math.abs(val2)) * 100)
+        sym := na(dif) ? "" : dif > 0 ? '+' + str.tostring(dif) + '%' : str.tostring(dif) + '%'
 
-    
-    table.cell( table_id = _table,  column = _column, row = _row, text = na(dif) ? "●" : toggleMiniMode ? "●" : sym,text_halign = text.align_right, text_color = na(dif) ? FrameCol : dif >0 ? UpColor : dif <0 ? DownColor : dif ==0 ? UnchangedColor : FrameCol,text_size = tablesize)
-    
+    cell_color = na(dif) ? FrameCol : dif > 0 ? UpColor : dif < 0 ? DownColor : UnchangedColor
+    table.cell(table_id = _table, column = _column, row = _row, text = na(dif) ? "●" : toggleMiniMode ? "●" : sym, text_halign = text.align_right, text_color = cell_color, text_size = tablesize, bgcolor = BodyColor)
 
-// Free Float
-free_float = nz(request.financial(syminfo.tickerid, 'FLOAT_SHARES_OUTSTANDING', 'FY'))
-ff = na(ta.vwap) ? free_float / 10000000 : free_float * ta.vwap / 10000000
-validated_ff = na(ff) or nz(ff) == 0 ? '' : str.tostring(math.round(ff)) + ' Cr'
-
-//Marketcap
+//════════ Meta Header Calculations ═════════
 outstanding = request.financial(syminfo.tickerid, "TOTAL_SHARES_OUTSTANDING", "FQ")
-mc = outstanding*close / 10000000
-validated_mc = na(mc) or nz(mc) == 0 ? '' : str.tostring(math.round(mc,0)) + ' Cr'
+mc = outstanding * close / 10000000
+validated_mc = na(mc) or nz(mc) == 0 ? 'N/A' : str.tostring(math.round(mc, 0)) + ' Cr'
 
-// Creating the table with final outputs
+// ROE = Net Income (TTM) / Total Equity (latest quarter)
+niTtm = request.financial(syminfo.tickerid, "NET_INCOME", "TTM", ignore_invalid_symbol=true)
+totEquity = request.financial(syminfo.tickerid, "TOTAL_EQUITY", "FQ", ignore_invalid_symbol=true)
+roe = na(niTtm) or na(totEquity) or totEquity == 0 ? na : niTtm / totEquity * 100
+validated_roe = na(roe) ? 'N/A' : str.tostring(math.round(roe, 1)) + '%'
 
-var table t = table.new(tableposY + "_" + tableposX, columns = 7, rows = datasize, bgcolor = BGColor, frame_color=FrameCol, frame_width=1,border_color=BorderCol, border_width=1)
+// ROCE = EBIT (TTM) / Capital Employed (Total Assets - Current Liabilities, latest quarter)
+ebitTtm = request.financial(syminfo.tickerid, "PRETAX_INCOME", "TTM", ignore_invalid_symbol=true)
+totAssets = request.financial(syminfo.tickerid, "TOTAL_ASSETS", "FQ", ignore_invalid_symbol=true)
+curLiab = request.financial(syminfo.tickerid, "TOTAL_CURRENT_LIABILITIES", "FQ", ignore_invalid_symbol=true)
+capEmployed = na(totAssets) or na(curLiab) ? na : totAssets - curLiab
+roce = na(ebitTtm) or na(capEmployed) or capEmployed == 0 ? na : ebitTtm / capEmployed * 100
+validated_roce = na(roce) ? 'N/A' : str.tostring(math.round(roce, 1)) + '%'
 
-if barstate.islast and not toggleMiniMode
+// Listed year, taken from the first available bar
+var int firstYear = na
+if na(firstYear)
+    firstYear := year(time)
+validated_listed = na(firstYear) ? 'N/A' : str.tostring(firstYear)
 
-    ft(t,0,0, topleft == 'FF' ? validated_ff : topleft == 'Mcap' ? validated_mc : '')
-    ft(t,1,0,finID1)
-    ft(t,2,0, per == 'FY' ? 'YoY' : '%Chg')
-    ft(t,3,0,finID2)
-    ft(t,4,0, per == 'FY' ? 'YoY' : '%Chg')
+// 10:20 EMA = EMA10 support touches / EMA20 support touches over the lookback
+ema10 = ta.ema(close, 10)
+ema20 = ta.ema(close, 20)
+ema10Touches = math.sum(low < ema10 and close > ema10 ? 1.0 : 0.0, emaLookback)
+ema20Touches = math.sum(low < ema20 and close > ema20 ? 1.0 : 0.0, emaLookback)
+validated_ema = na(ema20Touches) or ema20Touches == 0 ? 'N/A' : str.tostring(math.round(ema10Touches / ema20Touches * 100)) + '%'
 
+string header1 = "MCap " + validated_mc + " | ROE " + validated_roe + " | ROCE " + validated_roce + " | Listed " + validated_listed + " | 10:20 " + validated_ema
+string header2 = syminfo.sector + " | " + syminfo.industry
+
+//════════ Table Creation ═════════
+var table t = table.new(tableposY + "_" + tableposX, columns = 9, rows = datasize + 3, bgcolor = BGColor)
 
 if barstate.islast
 
+    // Spacer row: lifts a bottom-anchored table above the chart's earnings / volume markers
+    if tableposY == "bottom" and bottomGap > 0
+        table.cell(t, 0, datasize + 2, "", height = bottomGap, bgcolor = color.new(BGColor, 100))
+
+    // Top Header Rows
+    table.merge_cells(t, 0, 0, 8, 0)
+    table.cell(t, 0, 0, header1, text_color = TextColor, text_size = tablesize, bgcolor = HeadColor, text_halign = text.align_center)
+    
+    table.merge_cells(t, 0, 1, 8, 1)
+    table.cell(t, 0, 1, header2, text_color = TextColor, text_size = tablesize, bgcolor = HeadColor, text_halign = text.align_center)
+
+    // Column Headers
+    table.cell(t, 0, 2, per, text_color=TextColor, bgcolor=HeadColor, text_size=tablesize)
+    table.cell(t, 1, 2, "EPS", text_color=TextColor, bgcolor=HeadColor, text_size=tablesize, text_halign=text.align_right)
+    table.cell(t, 2, 2, per == 'FY' ? 'YoY' : 'YoY', text_color=TextColor, bgcolor=HeadColor, text_size=tablesize, text_halign=text.align_right)
+    table.cell(t, 3, 2, "QoQ", text_color=TextColor, bgcolor=HeadColor, text_size=tablesize, text_halign=text.align_right)
+    table.cell(t, 4, 2, "Sales", text_color=TextColor, bgcolor=HeadColor, text_size=tablesize, text_halign=text.align_right)
+    table.cell(t, 5, 2, per == 'FY' ? 'YoY' : 'YoY', text_color=TextColor, bgcolor=HeadColor, text_size=tablesize, text_halign=text.align_right)
+    table.cell(t, 6, 2, "QoQ", text_color=TextColor, bgcolor=HeadColor, text_size=tablesize, text_halign=text.align_right)
+    table.cell(t, 7, 2, "OPM%", text_color=TextColor, bgcolor=HeadColor, text_size=tablesize, text_halign=text.align_right)
+    table.cell(t, 8, 2, "P/E", text_color=TextColor, bgcolor=HeadColor, text_size=tablesize, text_halign=text.align_right)
+
     if not toggleMiniMode
-
         for i = 0 to datasize-5
-            // Column #1 Date
-            ftdate(t, 0, i+1, str.format('{0, date, MMM-yy}', array.get(date, i)))
-            // Column #2 EPS Data
-            fcell(finID=finID1, _table=t, _column=1, _row=i+1, _value=arrayFinData1, _i=i)
-            // Column #3 EPS YoY
-            fyoy(t, 2, i+1, arrayFinData1, i, per == 'FY' ? 1 : 4)
-            // Column #4 Sales Data
-            fcell(finID=finID2, _table=t, _column=3, _row=i+1, _value=arrayFinData2, _i=i)
-            // Column #5 Sales YoY
-            fyoy(t, 4, i+1, arrayFinData2, i, per == 'FY' ? 1 : 4)
+            int r = i + 3
+            ftdate(t, 0, r, str.format('{0, date, MMM-yy}', array.get(date, i))) // Date
+            fcell(true, t, 1, r, arrayFinData1, i)                               // EPS
+            fchange(t, 2, r, arrayFinData1, i, per == 'FY' ? 1 : 4)              // EPS YoY
+            fchange(t, 3, r, arrayFinData1, i, 1)                                // EPS QoQ
+            fcell(false, t, 4, r, arrayFinData2, i)                              // Sales
+            fchange(t, 5, r, arrayFinData2, i, per == 'FY' ? 1 : 4)              // Sales YoY
+            fchange(t, 6, r, arrayFinData2, i, 1)                                // Sales QoQ
+            fchange(t, 7, r, arrayFinData3, i, per == 'FY' ? 1 : 4)              // OPM% Change formatted like image
+            fcell(false, t, 8, r, arrayFinData4, i, false, true)                 // P/E Ratio
+
     else if toggleMiniMode
-
         for i = 0 to datasize-5
-            // Column #1 Date
-            ftdate(t, 0, i+1, str.format('{0, date, MMM-yy}', array.get(date, i)))
-            // Column #2 EPS YoY
-            fyoy(t, 2, i+1, arrayFinData1, i, per == 'FY' ? 1 : 4)
-            // Column #3 Sales YoY
-            fyoy(t, 4, i+1, arrayFinData2, i, per == 'FY' ? 1 : 4)
+            int r = i + 3
+            ftdate(t, 0, r, str.format('{0, date, MMM-yy}', array.get(date, i)))
+            fchange(t, 2, r, arrayFinData1, i, per == 'FY' ? 1 : 4)
+            fchange(t, 3, r, arrayFinData1, i, 1)
+            fchange(t, 5, r, arrayFinData2, i, per == 'FY' ? 1 : 4)
+            fchange(t, 6, r, arrayFinData2, i, 1)
+            fchange(t, 7, r, arrayFinData3, i, per == 'FY' ? 1 : 4)
